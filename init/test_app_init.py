@@ -62,24 +62,54 @@ class TestApplicationInit:
         company_name = app_config['company_name']
         login = app_config['login']
         password = app_config['password']
+        web_url = app_config['web_url']
         
-        # Remplir le formulaire
-        company_field = driver.find_element(By.ID, "company")
+        # Vérifier qu'on est sur la page d'initialisation, sinon y naviguer
+        if "/init-app" not in driver.current_url:
+            print(f"Navigation vers la page d'initialisation depuis: {driver.current_url}")
+            driver.get(f"{web_url}/init-app")
+        
+        # Attendre que tous les éléments soient présents
+        wait = WebDriverWait(driver, 10)
+        
+        # Attendre d'être sur la bonne page
+        wait.until(lambda d: "/init-app" in d.current_url)
+        print(f"✓ Sur la page d'initialisation: {driver.current_url}")
+        
+        # Attendre que la page soit complètement chargée en vérifiant la présence du formulaire
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "form")))
+        print("✓ Formulaire d'initialisation chargé")
+        
+        # Remplir le formulaire - récupérer et utiliser chaque élément immédiatement
+        # Champ company
+        company_field = wait.until(EC.element_to_be_clickable((By.ID, "company")))
         company_field.clear()
         company_field.send_keys(company_name)
         print(f"✓ Champ 'company' rempli avec: {company_name}")
         
-        user_field = driver.find_element(By.ID, "user")
+        # Petit délai pour s'assurer que l'action précédente est terminée
+        time.sleep(0.5)
+        
+        # Champ user
+        user_field = wait.until(EC.element_to_be_clickable((By.ID, "user")))
         user_field.clear()
         user_field.send_keys(login)
         print(f"✓ Champ 'user' rempli avec: {login}")
         
-        password_field = driver.find_element(By.ID, "password")
+        # Petit délai pour s'assurer que l'action précédente est terminée
+        time.sleep(0.5)
+        
+        # Champ password
+        password_field = wait.until(EC.element_to_be_clickable((By.ID, "password")))
         password_field.clear()
         password_field.send_keys(password)
         print("✓ Champ 'password' rempli")
         
-        password_confirm_field = driver.find_element(By.ID, "passwordConfirm")
+        # Petit délai pour s'assurer que l'action précédente est terminée  
+        time.sleep(0.5)
+        
+        # Champ passwordConfirm
+        password_confirm_field = wait.until(EC.element_to_be_clickable((By.ID, "passwordConfirm")))
         password_confirm_field.clear()
         password_confirm_field.send_keys(password)
         print("✓ Champ 'passwordConfirm' rempli")
@@ -87,15 +117,18 @@ class TestApplicationInit:
         # Sauvegarder l'état avant soumission
         app_session.current_user = login
         
-        # Soumettre le formulaire
-        submit_button = driver.find_element(By.ID, "submit")
+        # Petit délai pour s'assurer que tous les champs sont bien remplis
+        time.sleep(1)
+        
+        # Soumettre le formulaire - attendre que le bouton soit cliquable
+        submit_button = wait.until(EC.element_to_be_clickable((By.ID, "submit")))
         submit_button.click()
         print("✓ Formulaire soumis")
     
     @pytest.mark.order(4)
-    def test_04_verify_redirect_to_login_after_init(self, driver, app_config, app_session):
-        """Étape 4: Vérifier la redirection vers la page de login après initialisation"""
-        # Attendre la redirection vers la page de login
+    def test_04_verify_redirect_to_auth_after_init(self, driver, app_config, app_session):
+        """Étape 4: Vérifier la redirection vers la page d'authentification après initialisation"""
+        # Attendre la redirection vers la page d'authentification
         wait = WebDriverWait(driver, 15)  # Délai plus long pour l'initialisation DB
         
         try:
@@ -117,18 +150,19 @@ class TestApplicationInit:
             raise
     
     @pytest.mark.order(5)
-    def test_05_verify_login_page_ready(self, driver, app_session):
-        """Étape 5: Vérifier que la page de login est prête et fonctionnelle"""
-        # Vérifier qu'on est bien sur la page de login
-        assert "/login" in driver.current_url
+    def test_05_verify_redirect_to_auth_page(self, driver, app_session):
+        """Étape 5: Vérifier la redirection vers la page d'authentification après initialisation"""
+        # Vérifier qu'on est bien sur la page de login après l'initialisation
+        assert "/login" in driver.current_url, f"Attendu /login après initialisation, mais sur {driver.current_url}"
         
         # L'application est maintenant initialisée (company et user créés)
         app_session.is_initialized = True
         
+        print(f"✓ Redirection réussie vers la page d'authentification: {driver.current_url}")
         print("✓ Application initialisée avec succès")
         print("✓ Company et user admin créés")
-        print("✓ Page de login accessible")
-        print("Note: Le cookie de session sera créé après le login")
+        print("✓ Page d'authentification prête")
+        print("Note: Les tests de connexion sont dans login/test_login.py")
     
     @pytest.mark.order(6)
     def test_06_verify_app_initialized_on_index_access(self, driver, app_config, app_session):
