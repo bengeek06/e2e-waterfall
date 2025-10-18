@@ -130,6 +130,7 @@ class TestAPIUsers:
         assert "email" in user_info, "Email not found in user info"
         print(f"✅ User email: {user_info['email']}")
         api_tester.user_id = user_info['id']
+        api_tester.company_id = user_info['company_id']
     
     def test03_api_get_user_roles(self, api_tester):
         """Vérifier l'accès aux rôles utilisateur via l'API Identity"""
@@ -167,4 +168,62 @@ class TestAPIUsers:
         
         # Sauvegarder les rôles pour d'éventuels tests ultérieurs
         api_tester.user_roles = roles_list
+        
+    def test04_api_add_user_roles(self, api_tester):
+        """Vérifier l'ajout de roles a un utilisateur via l'API Identity"""
+        assert hasattr(api_tester, 'cookies_dict'), "Authentication cookies not set from previous test"
+        assert hasattr(api_tester, 'user_id'), "User ID not set from previous test"
+        assert hasattr(api_tester, 'company_id'), "Company ID not set from previous test"
+        
+        new_role_data = {
+            "company_id": api_tester.company_id,  # Utiliser l'ID d'entreprise récupéré précédemment
+            "name": "Test Role"  # Remplacer par un nom de rôle valide pour le test
+        }
+
+        new_role_response = api_tester.session.post(
+            f"{api_tester.base_url}/api/guardian/roles",
+            json=new_role_data,
+            cookies=api_tester.cookies_dict
+        )
+
+        print(f"Add role response status: {new_role_response.status_code}")
+        print(f"Add role response content: {new_role_response.text}")
+
+        assert new_role_response.status_code == 201, f"Expected 201, got {new_role_response.status_code}: {new_role_response.text}"
+        added_role = new_role_response.json()
+        assert "id" in added_role, "Role ID not found in response"
+        print(f"✅ Role added successfully: {added_role['id']}")
+
+        user_role_response = api_tester.session.post(
+            f"{api_tester.base_url}/api/identity/users/{api_tester.user_id}/roles",
+            json={"role_id": added_role['id']},
+            cookies=api_tester.cookies_dict
+        )
+
+        print(f"Add user role response status: {user_role_response.status_code}")
+        print(f"Add user role response content: {user_role_response.text}")
+
+        assert user_role_response.status_code == 201, f"Expected 201, got {user_role_response.status_code}: {user_role_response.text}"
+        added_user_role = user_role_response.json()
+        assert "id" in added_user_role, "User Role ID not found in response"
+        print(f"✅ User Role added successfully: {added_user_role['id']}")
+        api_tester.added_role_id = added_user_role['id']
+
+    def test05_api_remove_user_roles(self, api_tester):
+        """Vérifier la suppression de roles d'un utilisateur via l'API Identity"""
+        assert hasattr(api_tester, 'cookies_dict'), "Authentication cookies not set from previous test"
+        assert hasattr(api_tester, 'user_id'), "User ID not set from previous test"
+        assert hasattr(api_tester, 'added_role_id'), "Added Role ID not set from previous test"
+        
+        user_role_response = api_tester.session.delete(
+            f"{api_tester.base_url}/api/identity/users/{api_tester.user_id}/roles/{api_tester.added_role_id}",
+            cookies=api_tester.cookies_dict
+        )
+
+        print(f"Remove user role response status: {user_role_response.status_code}")
+        print(f"Remove user role response content: {user_role_response.text}")
+
+        assert user_role_response.status_code == 204, f"Expected 204, got {user_role_response.status_code}: {user_role_response.text}"
+        print(f"✅ User Role removed successfully: {api_tester.added_role_id}")
+
         
