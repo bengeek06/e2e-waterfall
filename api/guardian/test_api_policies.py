@@ -1,6 +1,14 @@
 import requests
 import time
 import pytest
+import sys
+from pathlib import Path
+
+# Ajouter le répertoire parent au path pour importer conftest
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from conftest import get_service_logger
+
+logger = get_service_logger('guardian')
 
 class APITester:
     def __init__(self, app_config):
@@ -9,6 +17,33 @@ class APITester:
         # Ignorer les certificats auto-signés pour les tests
         self.session.verify = False
         self.auth_cookies = None
+    
+    @staticmethod
+    def log_request(method, url, data=None, cookies=None):
+        """Log une requête HTTP avec détails"""
+        logger.debug(f">>> REQUEST: {method} {url}")
+        if data:
+            # Masquer les mots de passe dans les logs
+            safe_data = data.copy() if isinstance(data, dict) else data
+            if isinstance(safe_data, dict) and 'password' in safe_data:
+                safe_data['password'] = '***'
+            logger.debug(f">>> Request body: {safe_data}")
+        if cookies:
+            # Logger les cookies utilisés (tronqués pour sécurité)
+            for key, value in cookies.items():
+                display_value = f"{value[:50]}..." if len(value) > 50 else value
+                logger.debug(f">>> Using {key}: {display_value}")
+    
+    @staticmethod
+    def log_response(response):
+        """Log une réponse HTTP avec détails"""
+        logger.debug(f"<<< RESPONSE: {response.status_code}")
+        logger.debug(f"<<< Response headers: {dict(response.headers)}")
+        try:
+            if response.text:
+                logger.debug(f"<<< Response body: {response.json()}")
+        except:
+            logger.debug(f"<<< Response body (raw): {response.text}")
         
     def set_auth_cookies(self, cookies):
         """Définir les cookies d'authentification"""
@@ -23,14 +58,14 @@ class APITester:
         while time.time() - start_time < timeout:
             try:
                 response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                print(f"wait_for_api - Status: {response.status_code}, Response: {response.text[:100]}...")
+                logger.debug(f"wait_for_api - Status: {response.status_code}, Response: {response.text[:100]}...")
                 if response.status_code == 200:
                     return True
                 elif response.status_code in [401, 403]:
-                    print(f"Authentication issue detected: {response.status_code}")
+                    logger.warning(f"Authentication issue detected: {response.status_code}")
                     return False  # Ne pas continuer si c'est un problème d'auth
             except requests.exceptions.RequestException as e:
-                print(f"Request exception: {e}")
+                logger.debug(f"Request exception: {e}")
                 pass
             time.sleep(2)
         return False
@@ -69,13 +104,13 @@ class TestAPIPolicies:
         # Utiliser la nouvelle méthode pour définir les cookies
         api_tester.set_auth_cookies(auth_token)
         
-        print(f"Available auth cookies: {list(auth_token.keys())}")
+        logger.info(f"Available auth cookies: {list(auth_token.keys())}")
         
         # Diagnostiquer les cookies
         access_token = auth_token.get('access_token')
         refresh_token = auth_token.get('refresh_token')
-        print(f"Access token: {access_token[:50] if access_token else None}...")
-        print(f"Refresh token: {refresh_token[:50] if refresh_token else None}...")
+        logger.info(f"Access token: {access_token[:50] if access_token else None}...")
+        logger.info(f"Refresh token: {refresh_token[:50] if refresh_token else None}...")
         
         # Méthode alternative : envoyer les cookies explicitement dans la requête
         cookies_dict = {
@@ -89,12 +124,12 @@ class TestAPIPolicies:
             cookies=cookies_dict
         )
         
-        print(f"Guardian version response status: {response.status_code}")
-        print(f"Guardian version response headers: {dict(response.headers)}")
-        print(f"Guardian version response content: {response.text}")
+        logger.info(f"Guardian version response status: {response.status_code}")
+        logger.info(f"Guardian version response headers: {dict(response.headers)}")
+        logger.info(f"Guardian version response content: {response.text}")
         
         # Vérifier les cookies envoyés dans la requête
-        print(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
+        logger.info(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
         
         # L'authentification fonctionne si on obtient une réponse de permissions (404) 
         # plutôt qu'une erreur d'authentification (401)
@@ -103,11 +138,11 @@ class TestAPIPolicies:
         if response.status_code == 404:
             error_response = response.json()
             assert "Access denied" in error_response.get("error", ""), "Expected permission error"
-            print("✅ Authentication successful - Permission system is working")
+            logger.info("✅ Authentication successful - Permission system is working")
         else:
             version_info = response.json()
             assert "version" in version_info, "Version info missing in response"
-            print(f"✅ Guardian API Version: {version_info['version']}")
+            logger.info(f"✅ Guardian API Version: {version_info['version']}")
             
         # Sauvegarder la méthode de cookies pour les autres tests
         api_tester.cookies_dict = cookies_dict
@@ -128,10 +163,10 @@ class TestAPIPolicies:
             cookies=cookies_dict
         )
         
-        print(f"Check permission response status: {response.status_code}")
-        print(f"Check permission response content: {response.text}")
-        print(f"Request URL: {response.url}")
-        print(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
+        logger.info(f"Check permission response status: {response.status_code}")
+        logger.info(f"Check permission response content: {response.text}")
+        logger.info(f"Request URL: {response.url}")
+        logger.info(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
         
         # L'API peut retourner 200 avec permission granted/denied ou 400 si les paramètres sont incorrects
         assert response.status_code in [200, 400, 403, 404], f"Unexpected status: {response.status_code} - {response.text}"
@@ -139,9 +174,9 @@ class TestAPIPolicies:
         
         if response.status_code == 200:
             result = response.json()
-            print(f"Policies result: {result}")
+            logger.info(f"Policies result: {result}")
         else:
-            print(f"Policies check response: {response.status_code} - {response.text}")
+            logger.info(f"Policies check response: {response.status_code} - {response.text}")
 
     def test03_api_check_post_policies(self, api_tester, auth_token):
         """Tester la vérification de policies avec des paramètres corrects"""
@@ -163,10 +198,10 @@ class TestAPIPolicies:
             json=params
         )
 
-        print(f"Check permission response status: {response.status_code}")
-        print(f"Check permission response content: {response.text}")
-        print(f"Request URL: {response.url}")
-        print(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
+        logger.info(f"Check permission response status: {response.status_code}")
+        logger.info(f"Check permission response content: {response.text}")
+        logger.info(f"Request URL: {response.url}")
+        logger.info(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
 
         # L'API peut retourner 201 Created ou 400 si les paramètres sont incorrects
         assert response.status_code == 201, f"Expected 201 Created for policies check, got {response.status_code}: {response.text}"
@@ -175,9 +210,9 @@ class TestAPIPolicies:
             result = response.json()
             assert "id" in result, "Expected policy ID in response"
             api_tester.created_policy_id = result["id"]
-            print(f"Policy created successfully with ID: {api_tester.created_policy_id}")
+            logger.info(f"Policy created successfully with ID: {api_tester.created_policy_id}")
         else:
-            print(f"Policy creation failed: {response.status_code} - {response.text}")
+            logger.info(f"Policy creation failed: {response.status_code} - {response.text}")
 
     def test04_api_check_patch_policies(self, api_tester, auth_token):
         """Tester la mise à jour de policies avec des paramètres corrects"""
@@ -194,7 +229,7 @@ class TestAPIPolicies:
             "name": "patched_test_policy"
         }
 
-        print(f"Attempting to update policy with ID: {api_tester.created_policy_id}")
+        logger.info(f"Attempting to update policy with ID: {api_tester.created_policy_id}")
 
         response = api_tester.session.patch(
             f"{api_tester.base_url}/api/guardian/policies/{api_tester.created_policy_id}",
@@ -202,10 +237,10 @@ class TestAPIPolicies:
             json=params
         )
 
-        print(f"Update policy response status: {response.status_code}")
-        print(f"Update policy response content: {response.text}")
-        print(f"Request URL: {response.url}")
-        print(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
+        logger.info(f"Update policy response status: {response.status_code}")
+        logger.info(f"Update policy response content: {response.text}")
+        logger.info(f"Request URL: {response.url}")
+        logger.info(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
 
         # L'API devrait retourner 200 OK pour une mise à jour réussie
         assert response.status_code == 200, f"Expected 200 OK for policy update, got {response.status_code}: {response.text}"
@@ -213,9 +248,9 @@ class TestAPIPolicies:
         if response.status_code == 200:
             result = response.json()
             assert result.get("name") == "patched_test_policy", "Policy name was not updated correctly"
-            print(f"Policy updated successfully: {result}")
+            logger.info(f"Policy updated successfully: {result}")
         else:
-            print(f"Policy update response: {response.status_code} - {response.text}")
+            logger.info(f"Policy update response: {response.status_code} - {response.text}")
 
     def test05_api_check_put_policies(self, api_tester, auth_token):
         """Tester la mise à jour de policies avec des paramètres corrects"""
@@ -232,7 +267,7 @@ class TestAPIPolicies:
             "name": "updated_test_policy"
         }
 
-        print(f"Attempting to update policy with ID: {api_tester.created_policy_id}")
+        logger.info(f"Attempting to update policy with ID: {api_tester.created_policy_id}")
 
         response = api_tester.session.put(
             f"{api_tester.base_url}/api/guardian/policies/{api_tester.created_policy_id}",
@@ -240,10 +275,10 @@ class TestAPIPolicies:
             json=params
         )
 
-        print(f"Update policy response status: {response.status_code}")
-        print(f"Update policy response content: {response.text}")
-        print(f"Request URL: {response.url}")
-        print(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
+        logger.info(f"Update policy response status: {response.status_code}")
+        logger.info(f"Update policy response content: {response.text}")
+        logger.info(f"Request URL: {response.url}")
+        logger.info(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
 
         # L'API devrait retourner 200 OK pour une mise à jour réussie
         assert response.status_code == 200, f"Expected 200 OK for policy update, got {response.status_code}: {response.text}"
@@ -251,9 +286,9 @@ class TestAPIPolicies:
         if response.status_code == 200:
             result = response.json()
             assert result.get("name") == "updated_test_policy", "Policy name was not updated correctly"
-            print(f"Policy updated successfully: {result}")
+            logger.info(f"Policy updated successfully: {result}")
         else:
-            print(f"Policy update response: {response.status_code} - {response.text}")
+            logger.info(f"Policy update response: {response.status_code} - {response.text}")
 
 
     def test06_api_check_post_new_permissions_policy(self, api_tester, auth_token):
@@ -281,10 +316,10 @@ class TestAPIPolicies:
             json=params
         )
         
-        print(f"Add permission to policy response status: {response.status_code}")
-        print(f"Add permission to policy response content: {response.text}")
-        print(f"Request URL: {response.url}")
-        print(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
+        logger.info(f"Add permission to policy response status: {response.status_code}")
+        logger.info(f"Add permission to policy response content: {response.text}")
+        logger.info(f"Request URL: {response.url}")
+        logger.info(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
 
         # L'API devrait retourner 200 OK ou 201 Created pour une mise à jour réussie
         assert response.status_code in [200, 201], f"Expected 200 OK or 201 Created for adding permission to policy, got {response.status_code}: {response.text}"
@@ -292,12 +327,12 @@ class TestAPIPolicies:
             result = response.json()
             assert "id" in result, "Expected permission relation ID in response"
             assert "permission_id" in result, "Expected permission_id in response"
-            print(f"Permission added to policy successfully: {result}")
+            logger.info(f"Permission added to policy successfully: {result}")
             # Stocker l'ID de la relation pour référence, mais on utilisera permission_id pour la suppression
             api_tester.created_permission_relation_id = result["id"]
             api_tester.added_permission_id = result["permission_id"]
         else:
-            print(f"Add permission to policy response: {response.status_code} - {response.text}")
+            logger.info(f"Add permission to policy response: {response.status_code} - {response.text}")
 
 
     def test07_api_check_get_permissions_policy(self, api_tester, auth_token):
@@ -315,10 +350,10 @@ class TestAPIPolicies:
             cookies=cookies_dict
         )
 
-        print(f"Get permissions of policy response status: {response.status_code}")
-        print(f"Get permissions of policy response content: {response.text}")
-        print(f"Request URL: {response.url}")
-        print(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
+        logger.info(f"Get permissions of policy response status: {response.status_code}")
+        logger.info(f"Get permissions of policy response content: {response.text}")
+        logger.info(f"Request URL: {response.url}")
+        logger.info(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
 
         # L'API devrait retourner 200 OK pour une requête réussie
         assert response.status_code == 200, f"Expected 200 OK for getting permissions of policy, got {response.status_code}: {response.text}"
@@ -326,9 +361,9 @@ class TestAPIPolicies:
         if response.status_code == 200:
             result = response.json()
             assert isinstance(result, list), "Expected a list of permissions"
-            print(f"Permissions of policy retrieved successfully: {result}")
+            logger.info(f"Permissions of policy retrieved successfully: {result}")
         else:
-            print(f"Get permissions of policy response: {response.status_code} - {response.text}")
+            logger.info(f"Get permissions of policy response: {response.status_code} - {response.text}")
 
     def test08_api_check_delete_permissions_policy(self, api_tester, auth_token):
         assert auth_token is not None, "No auth cookies available for policies test"
@@ -353,22 +388,22 @@ class TestAPIPolicies:
         # Utiliser l'ID de la première permission trouvée
         permission_to_delete_id = permissions[0]['id']
         
-        print(f"Attempting to delete permission with ID: {permission_to_delete_id} from policy ID: {api_tester.created_policy_id}")
+        logger.info(f"Attempting to delete permission with ID: {permission_to_delete_id} from policy ID: {api_tester.created_policy_id}")
         response = api_tester.session.delete(
             f"{api_tester.base_url}/api/guardian/policies/{api_tester.created_policy_id}/permissions/{permission_to_delete_id}",
             cookies=cookies_dict
         )
-        print(f"Delete permission from policy response status: {response.status_code}")
-        print(f"Delete permission from policy response content: {response.text}")
-        print(f"Request URL: {response.url}")
-        print(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
+        logger.info(f"Delete permission from policy response status: {response.status_code}")
+        logger.info(f"Delete permission from policy response content: {response.text}")
+        logger.info(f"Request URL: {response.url}")
+        logger.info(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
         
         # L'API devrait retourner 204 No Content pour une suppression réussie
         assert response.status_code == 204, f"Expected 204 No Content for deleting permission from policy, got {response.status_code}: {response.text}"
         if response.status_code == 204:
-            print(f"Permission deleted from policy successfully: ID {permission_to_delete_id}")
+            logger.info(f"Permission deleted from policy successfully: ID {permission_to_delete_id}")
         else:
-            print(f"Delete permission from policy response: {response.status_code} - {response.text}")
+            logger.info(f"Delete permission from policy response: {response.status_code} - {response.text}")
 
     def test09_api_check_delete_policies(self, api_tester, auth_token):
         """Tester la suppression de policies avec des paramètres corrects"""
@@ -381,28 +416,28 @@ class TestAPIPolicies:
             'refresh_token': auth_token.get('refresh_token')
         })
 
-        print(f"Attempting to delete policy with ID: {api_tester.created_policy_id}")
+        logger.info(f"Attempting to delete policy with ID: {api_tester.created_policy_id}")
 
         response = api_tester.session.delete(
             f"{api_tester.base_url}/api/guardian/policies/{api_tester.created_policy_id}",
             cookies=cookies_dict
         )
 
-        print(f"Delete policy response status: {response.status_code}")
-        print(f"Delete policy response content: {response.text}")
-        print(f"Request URL: {response.url}")
-        print(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
+        logger.info(f"Delete policy response status: {response.status_code}")
+        logger.info(f"Delete policy response content: {response.text}")
+        logger.info(f"Request URL: {response.url}")
+        logger.info(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
 
         # L'API peut retourner 204 No Content pour une suppression réussie ou 404 si la policy n'existe plus
         assert response.status_code in [204, 404], f"Expected 204 No Content or 404 Not Found for policy deletion, got {response.status_code}: {response.text}"
 
         if response.status_code == 204:
-            print(f"Policy deleted successfully: ID {api_tester.created_policy_id}")
+            logger.info(f"Policy deleted successfully: ID {api_tester.created_policy_id}")
             del api_tester.created_policy_id  # Nettoyer l'ID de la politique supprimée
         elif response.status_code == 404:
-            print(f"Policy not found (already deleted?): ID {api_tester.created_policy_id}")
+            logger.info(f"Policy not found (already deleted?): ID {api_tester.created_policy_id}")
             # Nettoyer l'ID même si la policy n'existe plus
             if hasattr(api_tester, 'created_policy_id'):
                 del api_tester.created_policy_id
         else:
-            print(f"Policy deletion response: {response.status_code} - {response.text}")
+            logger.info(f"Policy deletion response: {response.status_code} - {response.text}")
