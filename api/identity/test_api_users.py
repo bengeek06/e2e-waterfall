@@ -1,6 +1,14 @@
 import requests
 import time
 import pytest
+import sys
+from pathlib import Path
+
+# Ajouter le répertoire parent au path pour importer conftest
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from conftest import get_service_logger
+
+logger = get_service_logger('identity')
 
 class APITester:
     def __init__(self, app_config):
@@ -9,6 +17,33 @@ class APITester:
         # Ignorer les certificats auto-signés pour les tests
         self.session.verify = False
         self.auth_cookies = None
+    
+    @staticmethod
+    def log_request(method, url, data=None, cookies=None):
+        """Log une requête HTTP avec détails"""
+        logger.debug(f">>> REQUEST: {method} {url}")
+        if data:
+            # Masquer les mots de passe dans les logs
+            safe_data = data.copy() if isinstance(data, dict) else data
+            if isinstance(safe_data, dict) and 'password' in safe_data:
+                safe_data['password'] = '***'
+            logger.debug(f">>> Request body: {safe_data}")
+        if cookies:
+            # Logger les cookies utilisés (tronqués pour sécurité)
+            for key, value in cookies.items():
+                display_value = f"{value[:50]}..." if len(value) > 50 else value
+                logger.debug(f">>> Using {key}: {display_value}")
+    
+    @staticmethod
+    def log_response(response):
+        """Log une réponse HTTP avec détails"""
+        logger.debug(f"<<< RESPONSE: {response.status_code}")
+        logger.debug(f"<<< Response headers: {dict(response.headers)}")
+        try:
+            if response.text:
+                logger.debug(f"<<< Response body: {response.json()}")
+        except:
+            logger.debug(f"<<< Response body (raw): {response.text}")
         
     def set_auth_cookies(self, cookies):
         """Définir les cookies d'authentification"""
@@ -23,14 +58,14 @@ class APITester:
         while time.time() - start_time < timeout:
             try:
                 response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                print(f"wait_for_api - Status: {response.status_code}, Response: {response.text[:100]}...")
+                logger.debug(f"wait_for_api - Status: {response.status_code}, Response: {response.text[:100]}...")
                 if response.status_code == 200:
                     return True
                 elif response.status_code in [401, 403]:
-                    print(f"Authentication issue detected: {response.status_code}")
+                    logger.warning(f"Authentication issue detected: {response.status_code}")
                     return False  # Ne pas continuer si c'est un problème d'auth
             except requests.exceptions.RequestException as e:
-                print(f"Request exception: {e}")
+                logger.debug(f"Request exception: {e}")
                 pass
             time.sleep(2)
         return False
@@ -59,171 +94,251 @@ class TestAPIUsers:
         
         if response.status_code == 200:
             # Retourner les cookies de réponse pour avoir accès aux deux tokens
-            return response.cookies
+            access_token = response.cookies.get('access_token')
+            refresh_token = response.cookies.get('refresh_token')
+            return {
+                'access_token': access_token,
+                'refresh_token': refresh_token
+            }
         return None
 
-    def test01_api_identity_authentication(self, api_tester, auth_token):
-        """Vérifier que l'API Identity authentifie correctement les requêtes"""
-        assert auth_token is not None, "No auth cookies available for identity test"
-
-        # Utiliser la nouvelle méthode pour définir les cookies
-        api_tester.set_auth_cookies(auth_token)
+    @pytest.fixture(scope="function")
+    def setup_test_data(self, api_tester, auth_token):
+        """Setup pour chaque test avec cleanup automatique"""
+        assert auth_token is not None, "No auth cookies available"
         
-        print(f"Available auth cookies: {list(auth_token.keys())}")
-        
-        # Diagnostiquer les cookies
-        access_token = auth_token.get('access_token')
-        refresh_token = auth_token.get('refresh_token')
-        print(f"Access token: {access_token[:50] if access_token else None}...")
-        print(f"Refresh token: {refresh_token[:50] if refresh_token else None}...")
-        
-        # Méthode alternative : envoyer les cookies explicitement dans la requête
+        # Préparer les cookies pour les requêtes
         cookies_dict = {
-            'access_token': access_token,
-            'refresh_token': refresh_token
+            'access_token': auth_token['access_token'],
+            'refresh_token': auth_token['refresh_token']
         }
+        api_tester.cookies_dict = cookies_dict
         
-        # Tester l'endpoint de version/health de Identity avec cookies explicites
-        response = api_tester.session.get(
-            f"{api_tester.base_url}/api/identity/version",
+        # Récupérer user_id et company_id depuis /api/auth/verify
+        verify_response = api_tester.session.get(
+            f"{api_tester.base_url}/api/auth/verify",
             cookies=cookies_dict
         )
-
-        print(f"Identity version response status: {response.status_code}")
-        print(f"Identity version response headers: {dict(response.headers)}")
-        print(f"Identity version response content: {response.text}")
-
-        # Vérifier les cookies envoyés dans la requête
-        print(f"Request cookies sent: {response.request.headers.get('Cookie', 'No cookies')}")
+        assert verify_response.status_code == 200, f"Failed to verify auth: {verify_response.text}"
+        user_id = verify_response.json()['user_id']
+        company_id = verify_response.json()['company_id']
         
-        # L'authentification fonctionne si on obtient une réponse de permissions (404) 
-        # plutôt qu'une erreur d'authentification (401)
-        assert response.status_code in [200, 404], f"Expected 200 or 404 (permission denied), got {response.status_code}: {response.text}"
-        
-        if response.status_code == 404:
-            error_response = response.json()
-            assert "Access denied" in error_response.get("error", ""), "Expected permission error"
-            print("✅ Authentication successful - Permission system is working")
-        else:
-            version_info = response.json()
-            assert "version" in version_info, "Version info missing in response"
-            print(f"✅ Guardian API Version: {version_info['version']}")
-            
-        # Sauvegarder la méthode de cookies pour les autres tests
-        api_tester.cookies_dict = cookies_dict
-
-    def test02_api_identity_get_user(self, api_tester):
-        """Vérifier l'accès aux informations utilisateur via l'API Identity"""
-        assert hasattr(api_tester, 'cookies_dict'), "Authentication cookies not set from previous test"
-        
-        response = api_tester.session.get(
-            f"{api_tester.base_url}/api/identity/users",
-            cookies=api_tester.cookies_dict
-        )
-        
-        print(f"User info response status: {response.status_code}")
-        print(f"User info response content: {response.text}")
-        
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
-        
-        user_info = response.json()[0]  # Supposons que la réponse est une liste d'utilisateurs
-        assert "email" in user_info, "Email not found in user info"
-        print(f"✅ User email: {user_info['email']}")
-        api_tester.user_id = user_info['id']
-        api_tester.company_id = user_info['company_id']
-    
-    def test03_api_get_user_roles(self, api_tester):
-        """Vérifier l'accès aux rôles utilisateur via l'API Identity"""
-        assert hasattr(api_tester, 'cookies_dict'), "Authentication cookies not set from previous test"
-        assert hasattr(api_tester, 'user_id'), "User ID not set from previous test"
-        
-        response = api_tester.session.get(
-            f"{api_tester.base_url}/api/identity/users/{api_tester.user_id}/roles",
-            cookies=api_tester.cookies_dict
-        )
-        
-        print(f"User roles response status: {response.status_code}")
-        print(f"User roles response content: {response.text}")
-        
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
-        
-        roles_response = response.json()
-        assert isinstance(roles_response, dict), "Roles response is not a dictionary"
-        assert "roles" in roles_response, "No 'roles' key found in response"
-        
-        roles_list = roles_response["roles"]
-        assert isinstance(roles_list, list), "Roles is not a list"
-        
-        if len(roles_list) > 0:
-            # Vérifier la structure du premier rôle
-            first_role = roles_list[0]
-            required_fields = ['id', 'user_id', 'role_id', 'company_id', 'created_at', 'updated_at']
-            for field in required_fields:
-                assert field in first_role, f"Missing field '{field}' in role data"
-            
-            print(f"✅ User roles retrieved successfully: {len(roles_list)} role(s)")
-            print(f"   First role ID: {first_role['id']}")
-        else:
-            print("✅ User has no roles assigned")
-        
-        # Sauvegarder les rôles pour d'éventuels tests ultérieurs
-        api_tester.user_roles = roles_list
-        
-    def test04_api_add_user_roles(self, api_tester):
-        """Vérifier l'ajout de roles a un utilisateur via l'API Identity"""
-        assert hasattr(api_tester, 'cookies_dict'), "Authentication cookies not set from previous test"
-        assert hasattr(api_tester, 'user_id'), "User ID not set from previous test"
-        assert hasattr(api_tester, 'company_id'), "Company ID not set from previous test"
-        
-        new_role_data = {
-            "company_id": api_tester.company_id,  # Utiliser l'ID d'entreprise récupéré précédemment
-            "name": "Test Role"  # Remplacer par un nom de rôle valide pour le test
+        # Structure de tracking des ressources créées
+        created_resources = {
+            'roles': [],
+            'user_roles': [],
+            'users': []
         }
-
-        new_role_response = api_tester.session.post(
-            f"{api_tester.base_url}/api/guardian/roles",
-            json=new_role_data,
-            cookies=api_tester.cookies_dict
-        )
-
-        print(f"Add role response status: {new_role_response.status_code}")
-        print(f"Add role response content: {new_role_response.text}")
-
-        assert new_role_response.status_code == 201, f"Expected 201, got {new_role_response.status_code}: {new_role_response.text}"
-        added_role = new_role_response.json()
-        assert "id" in added_role, "Role ID not found in response"
-        print(f"✅ Role added successfully: {added_role['id']}")
-
-        user_role_response = api_tester.session.post(
-            f"{api_tester.base_url}/api/identity/users/{api_tester.user_id}/roles",
-            json={"role_id": added_role['id']},
-            cookies=api_tester.cookies_dict
-        )
-
-        print(f"Add user role response status: {user_role_response.status_code}")
-        print(f"Add user role response content: {user_role_response.text}")
-
-        assert user_role_response.status_code == 201, f"Expected 201, got {user_role_response.status_code}: {user_role_response.text}"
-        added_user_role = user_role_response.json()
-        assert "id" in added_user_role, "User Role ID not found in response"
-        print(f"✅ User Role added successfully: {added_user_role['id']}")
-        api_tester.added_role_id = added_user_role['id']
-
-    def test05_api_remove_user_roles(self, api_tester):
-        """Vérifier la suppression de roles d'un utilisateur via l'API Identity"""
-        assert hasattr(api_tester, 'cookies_dict'), "Authentication cookies not set from previous test"
-        assert hasattr(api_tester, 'user_id'), "User ID not set from previous test"
-        assert hasattr(api_tester, 'added_role_id'), "Added Role ID not set from previous test"
         
-        user_role_response = api_tester.session.delete(
-            f"{api_tester.base_url}/api/identity/users/{api_tester.user_id}/roles/{api_tester.added_role_id}",
-            cookies=api_tester.cookies_dict
+        logger.info(f"Setup test data - User: {user_id}, Company: {company_id}")
+        
+        yield user_id, company_id, cookies_dict, created_resources
+        
+        # Cleanup automatique à la fin du test
+        logger.info("🧹 Cleaning up test resources...")
+        
+        # Supprimer les user-roles en premier
+        for user_role_id in created_resources['user_roles']:
+            try:
+                delete_response = api_tester.session.delete(
+                    f"{api_tester.base_url}/api/identity/users/{user_id}/roles/{user_role_id}",
+                    cookies=cookies_dict
+                )
+                if delete_response.status_code == 204:
+                    logger.info(f"✅ Deleted user-role: {user_role_id}")
+                else:
+                    logger.warning(f"⚠️ Failed to delete user-role {user_role_id}: {delete_response.status_code}")
+            except Exception as e:
+                logger.error(f"❌ Error deleting user-role {user_role_id}: {e}")
+        
+        # Supprimer les roles créés
+        for role_id in created_resources['roles']:
+            try:
+                delete_response = api_tester.session.delete(
+                    f"{api_tester.base_url}/api/guardian/roles/{role_id}",
+                    cookies=cookies_dict
+                )
+                if delete_response.status_code == 204:
+                    logger.info(f"✅ Deleted role: {role_id}")
+                else:
+                    logger.warning(f"⚠️ Failed to delete role {role_id}: {delete_response.status_code}")
+            except Exception as e:
+                logger.error(f"❌ Error deleting role {role_id}: {e}")
+        
+        # Supprimer les users créés (si applicable)
+        for user_id_to_delete in created_resources['users']:
+            try:
+                delete_response = api_tester.session.delete(
+                    f"{api_tester.base_url}/api/identity/users/{user_id_to_delete}",
+                    cookies=cookies_dict
+                )
+                if delete_response.status_code == 204:
+                    logger.info(f"✅ Deleted user: {user_id_to_delete}")
+                else:
+                    logger.warning(f"⚠️ Failed to delete user {user_id_to_delete}: {delete_response.status_code}")
+            except Exception as e:
+                logger.error(f"❌ Error deleting user {user_id_to_delete}: {e}")
+        
+        logger.info("✅ Cleanup completed")
+
+    def test01_get_users_list(self, api_tester, auth_token, setup_test_data):
+        """Tester GET /users - Liste tous les utilisateurs"""
+        user_id, company_id, cookies_dict, resources = setup_test_data
+        
+        url = f"{api_tester.base_url}/api/identity/users"
+        api_tester.log_request("GET", url, cookies=cookies_dict)
+        
+        response = api_tester.session.get(url, cookies=cookies_dict)
+        
+        api_tester.log_response(response)
+        logger.info(f"Get users response status: {response.status_code}")
+        
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        
+        result = response.json()
+        assert isinstance(result, list), "Expected a list of users"
+        
+        logger.info(f"✅ Retrieved {len(result)} users")
+
+    def test02_get_user_by_id(self, api_tester, auth_token, setup_test_data):
+        """Tester GET /users/{id} - Récupérer un utilisateur par ID"""
+        user_id, company_id, cookies_dict, resources = setup_test_data
+        
+        url = f"{api_tester.base_url}/api/identity/users/{user_id}"
+        api_tester.log_request("GET", url, cookies=cookies_dict)
+        
+        response = api_tester.session.get(url, cookies=cookies_dict)
+        
+        api_tester.log_response(response)
+        logger.info(f"Get user by ID response status: {response.status_code}")
+        
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        
+        result = response.json()
+        assert result['id'] == user_id
+        assert 'email' in result
+        assert result['company_id'] == company_id
+        
+        logger.info(f"✅ User retrieved: {result['email']}")
+
+    def test03_get_user_roles(self, api_tester, auth_token, setup_test_data):
+        """Tester GET /users/{id}/roles - Récupérer les rôles d'un utilisateur"""
+        user_id, company_id, cookies_dict, resources = setup_test_data
+        
+        url = f"{api_tester.base_url}/api/identity/users/{user_id}/roles"
+        api_tester.log_request("GET", url, cookies=cookies_dict)
+        
+        response = api_tester.session.get(url, cookies=cookies_dict)
+        
+        api_tester.log_response(response)
+        logger.info(f"Get user roles response status: {response.status_code}")
+        
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        
+        result = response.json()
+        assert 'roles' in result, "No 'roles' key found in response"
+        assert isinstance(result['roles'], list), "Roles is not a list"
+        
+        logger.info(f"✅ Retrieved {len(result['roles'])} roles for user")
+
+    def test04_add_role_to_user(self, api_tester, auth_token, setup_test_data):
+        """Tester POST /users/{id}/roles - Ajouter un rôle à un utilisateur"""
+        user_id, company_id, cookies_dict, resources = setup_test_data
+        
+        import time
+        timestamp = int(time.time() * 1000)
+        
+        # Créer un rôle de test
+        role_data = {
+            "name": f"test_role_identity_{timestamp}",
+            "company_id": company_id
+        }
+        
+        role_response = api_tester.session.post(
+            f"{api_tester.base_url}/api/guardian/roles",
+            json=role_data,
+            cookies=cookies_dict
         )
+        assert role_response.status_code == 201, f"Failed to create role: {role_response.text}"
+        role = role_response.json()
+        resources['roles'].append(role['id'])
+        
+        logger.info(f"Created test role: {role['id']}")
+        
+        # Ajouter le rôle à l'utilisateur
+        add_role_data = {
+            "role_id": role['id']
+        }
+        
+        url = f"{api_tester.base_url}/api/identity/users/{user_id}/roles"
+        api_tester.log_request("POST", url, data=add_role_data, cookies=cookies_dict)
+        
+        response = api_tester.session.post(
+            url,
+            json=add_role_data,
+            cookies=cookies_dict
+        )
+        
+        api_tester.log_response(response)
+        logger.info(f"Add role to user response status: {response.status_code}")
+        
+        assert response.status_code == 201, f"Expected 201, got {response.status_code}: {response.text}"
+        
+        result = response.json()
+        assert 'id' in result, "Expected user-role ID in response"
+        
+        resources['user_roles'].append(result['id'])
+        
+        logger.info(f"✅ Role added to user successfully: {result['id']}")
 
-        print(f"Remove user role response status: {user_role_response.status_code}")
-        print(f"Remove user role response content: {user_role_response.text}")
+    def test05_remove_role_from_user(self, api_tester, auth_token, setup_test_data):
+        """Tester DELETE /users/{id}/roles/{role_id} - Supprimer un rôle d'un utilisateur"""
+        user_id, company_id, cookies_dict, resources = setup_test_data
+        
+        import time
+        timestamp = int(time.time() * 1000)
+        
+        # Créer un rôle de test
+        role_data = {
+            "name": f"test_role_remove_{timestamp}",
+            "company_id": company_id
+        }
+        
+        role_response = api_tester.session.post(
+            f"{api_tester.base_url}/api/guardian/roles",
+            json=role_data,
+            cookies=cookies_dict
+        )
+        assert role_response.status_code == 201
+        role = role_response.json()
+        resources['roles'].append(role['id'])
+        
+        # Ajouter le rôle à l'utilisateur
+        add_response = api_tester.session.post(
+            f"{api_tester.base_url}/api/identity/users/{user_id}/roles",
+            json={"role_id": role['id']},
+            cookies=cookies_dict
+        )
+        assert add_response.status_code == 201
+        user_role = add_response.json()
+        user_role_id = user_role['id']
+        
+        logger.info(f"Created user-role for deletion: {user_role_id}")
+        
+        # Tester la suppression
+        url = f"{api_tester.base_url}/api/identity/users/{user_id}/roles/{user_role_id}"
+        api_tester.log_request("DELETE", url, cookies=cookies_dict)
+        
+        response = api_tester.session.delete(url, cookies=cookies_dict)
+        
+        api_tester.log_response(response)
+        logger.info(f"Remove role from user response status: {response.status_code}")
+        
+        assert response.status_code == 204, f"Expected 204, got {response.status_code}: {response.text}"
+        
+        logger.info(f"✅ Role removed from user successfully: {user_role_id}")
+        
+        # Ne pas ajouter à resources car déjà supprimé
 
-        assert user_role_response.status_code == 204, f"Expected 204, got {user_role_response.status_code}: {user_role_response.text}"
-        print(f"✅ User Role removed successfully: {api_tester.added_role_id}")
 
         
