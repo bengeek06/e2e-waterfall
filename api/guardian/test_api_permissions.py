@@ -94,64 +94,63 @@ class TestAPIPermissions:
         
         if response.status_code == 200:
             # Retourner les cookies de réponse pour avoir accès aux deux tokens
-            return response.cookies
+            access_token = response.cookies.get('access_token')
+            refresh_token = response.cookies.get('refresh_token')
+            return {
+                'access_token': access_token,
+                'refresh_token': refresh_token
+            }
         return None
 
-    def test01_api_guardian_authentication(self, api_tester, auth_token):
-        """Vérifier que l'API Guardian authentifie correctement les requêtes"""
-        assert auth_token is not None, "No auth cookies available for guardian test"
+    @pytest.fixture(scope="function")
+    def setup_test_data(self, api_tester, auth_token):
+        """Setup pour chaque test avec cleanup automatique"""
+        assert auth_token is not None, "No auth cookies available"
         
-        # Utiliser la nouvelle méthode pour définir les cookies
-        api_tester.set_auth_cookies(auth_token)
-        
-        logger.info(f"Available auth cookies: {list(auth_token.keys())}")
-        
-        # Diagnostiquer les cookies
-        access_token = auth_token.get('access_token')
-        refresh_token = auth_token.get('refresh_token')
-        logger.info(f"Access token: {access_token[:50] if access_token else None}...")
-        logger.info(f"Refresh token: {refresh_token[:50] if refresh_token else None}...")
-        
-        # Méthode alternative : envoyer les cookies explicitement dans la requête
+        # Préparer les cookies pour les requêtes
         cookies_dict = {
-            'access_token': access_token,
-            'refresh_token': refresh_token
+            'access_token': auth_token['access_token'],
+            'refresh_token': auth_token['refresh_token']
+        }
+        api_tester.cookies_dict = cookies_dict
+        
+        # Récupérer company_id depuis /api/auth/verify
+        verify_response = api_tester.session.get(
+            f"{api_tester.base_url}/api/auth/verify",
+            cookies=cookies_dict
+        )
+        assert verify_response.status_code == 200, f"Failed to verify auth: {verify_response.text}"
+        company_id = verify_response.json()['company_id']
+        
+        # Structure de tracking des ressources créées
+        created_resources = {
+            'permissions': []
         }
         
-        # Tester l'endpoint de version/health de Guardian avec cookies explicites
-        url = f"{api_tester.base_url}/api/guardian/version"
-        api_tester.log_request("GET", url, cookies=cookies_dict)
+        yield company_id, cookies_dict, created_resources
         
-        response = api_tester.session.get(url, cookies=cookies_dict)
+        # Cleanup automatique à la fin du test
+        logger.info("🧹 Cleaning up test resources...")
         
-        api_tester.log_response(response)
-        logger.info(f"Guardian version response status: {response.status_code}")
+        # Supprimer les permissions créées
+        for permission_id in created_resources['permissions']:
+            try:
+                delete_response = api_tester.session.delete(
+                    f"{api_tester.base_url}/api/guardian/permissions/{permission_id}",
+                    cookies=cookies_dict
+                )
+                if delete_response.status_code == 204:
+                    logger.info(f"✅ Deleted permission: {permission_id}")
+                else:
+                    logger.warning(f"⚠️ Failed to delete permission {permission_id}: {delete_response.status_code}")
+            except Exception as e:
+                logger.error(f"❌ Error deleting permission {permission_id}: {e}")
         
-        # L'authentification fonctionne si on obtient une réponse de permissions (404) 
-        # plutôt qu'une erreur d'authentification (401)
-        assert response.status_code in [200, 404], f"Expected 200 or 404 (permission denied), got {response.status_code}: {response.text}"
-        
-        if response.status_code == 404:
-            error_response = response.json()
-            assert "Access denied" in error_response.get("error", ""), "Expected permission error"
-            logger.info("✅ Authentication successful - Permission system is working")
-        else:
-            version_info = response.json()
-            assert "version" in version_info, "Version info missing in response"
-            logger.info(f"✅ Guardian API Version: {version_info['version']}")
-            
-        # Sauvegarder la méthode de cookies pour les autres tests
-        api_tester.cookies_dict = cookies_dict
+        logger.info("✅ Cleanup completed")
 
-    def test02_api_check_permission(self, api_tester, auth_token):
-        """Tester la vérification de permissions avec des paramètres corrects"""
-        assert auth_token is not None, "No auth cookies available for permissions test"
-
-        # Utiliser les cookies sauvegardés du test précédent
-        cookies_dict = getattr(api_tester, 'cookies_dict', {
-            'access_token': auth_token.get('access_token'),
-            'refresh_token': auth_token.get('refresh_token')
-        })
+    def test01_get_permissions_list(self, api_tester, auth_token, setup_test_data):
+        """Tester GET /permissions - Liste toutes les permissions"""
+        company_id, cookies_dict, resources = setup_test_data
         
         url = f"{api_tester.base_url}/api/guardian/permissions"
         api_tester.log_request("GET", url, cookies=cookies_dict)
@@ -159,13 +158,12 @@ class TestAPIPermissions:
         response = api_tester.session.get(url, cookies=cookies_dict)
         
         api_tester.log_response(response)
-        logger.info(f"Check permission response status: {response.status_code}")
+        logger.info(f"Get permissions response status: {response.status_code}")
         
-        # L'API peut retourner 200 avec permission granted/denied ou 400 si les paramètres sont incorrects
-        assert response.status_code in [200, 400, 403, 404], f"Unexpected status: {response.status_code} - {response.text}"
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
         
-        if response.status_code == 200:
-            permission_result = response.json()
-            logger.info(f"Permission result: {permission_result}")
-        else:
-            logger.info(f"Permission check response: {response.status_code} - {response.text}")
+        result = response.json()
+        assert isinstance(result, list), "Expected a list of permissions"
+        
+        logger.info(f"✅ Retrieved {len(result)} permissions")
+
