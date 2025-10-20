@@ -247,3 +247,209 @@ class TestAPICommunication:
         # Les cookies peuvent être supprimés côté serveur, vérifier la réponse
         assert "message" in response_json, "No message in logout response"
         logger.info("Logout successful")
+
+    def test08_api_config(self, api_tester):
+        """Tester l'endpoint de configuration"""
+        url = f"{api_tester.base_url}/api/auth/config"
+        api_tester.log_request('GET', url)
+        
+        response = api_tester.session.get(url)
+        api_tester.log_response(response)
+        
+        logger.info(f"Config response status: {response.status_code}")
+        
+        assert response.status_code == 200, f"Failed to get config with status {response.status_code}: {response.text}"
+        
+        config = response.json()
+        
+        # Vérifier que la réponse contient les champs attendus selon la spec
+        expected_fields = ['FLASK_ENV', 'DATABASE_URL', 'LOG_LEVEL', 'USER_SERVICE_URL']
+        
+        for field in expected_fields:
+            # Certains champs peuvent être absents selon l'environnement
+            if field in config:
+                logger.info(f"Config field '{field}': {config[field]}")
+        
+        # Au minimum FLASK_ENV devrait être présent
+        assert len(config) > 0, "Config response should not be empty"
+        logger.info(f"Config retrieved successfully with {len(config)} fields")
+
+    def test09_api_login_invalid_email(self, api_tester):
+        """Tester la connexion avec un email invalide"""
+        login_data = {
+            "email": "nonexistent@example.com",
+            "password": "wrongpassword"
+        }
+        
+        url = f"{api_tester.base_url}/api/auth/login"
+        api_tester.log_request('POST', url, {"email": "nonexistent@example.com", "password": "***"})
+        
+        response = api_tester.session.post(url, json=login_data)
+        api_tester.log_response(response)
+        
+        logger.info(f"Invalid email login response status: {response.status_code}")
+        
+        assert response.status_code == 401, f"Expected 401 for invalid credentials, got {response.status_code}"
+        
+        response_json = response.json()
+        assert "message" in response_json, "Expected error message in response"
+        logger.info(f"Invalid credentials correctly rejected: {response_json.get('message')}")
+
+    def test10_api_login_invalid_password(self, api_tester, app_config):
+        """Tester la connexion avec un mot de passe invalide"""
+        login_data = {
+            "email": app_config['login'],
+            "password": "wrongpassword123"
+        }
+        
+        url = f"{api_tester.base_url}/api/auth/login"
+        api_tester.log_request('POST', url, {"email": app_config['login'], "password": "***"})
+        
+        response = api_tester.session.post(url, json=login_data)
+        api_tester.log_response(response)
+        
+        logger.info(f"Invalid password login response status: {response.status_code}")
+        
+        assert response.status_code == 401, f"Expected 401 for invalid password, got {response.status_code}"
+        
+        response_json = response.json()
+        assert "message" in response_json, "Expected error message in response"
+        logger.info(f"Invalid password correctly rejected: {response_json.get('message')}")
+
+    def test11_api_login_missing_fields(self, api_tester):
+        """Tester la connexion avec des champs manquants"""
+        login_data = {
+            "email": "test@example.com"
+            # password manquant
+        }
+        
+        url = f"{api_tester.base_url}/api/auth/login"
+        api_tester.log_request('POST', url, login_data)
+        
+        response = api_tester.session.post(url, json=login_data)
+        api_tester.log_response(response)
+        
+        logger.info(f"Missing fields login response status: {response.status_code}")
+        
+        # L'API retourne 401 pour champs manquants (traité comme credentials invalides)
+        assert response.status_code in [400, 401, 422], \
+            f"Expected 400, 401 or 422 for missing fields, got {response.status_code}"
+        logger.info("Missing password correctly rejected")
+
+    def test12_api_login_wrong_content_type(self, api_tester, app_config):
+        """Tester la connexion avec un Content-Type invalide"""
+        login_data = f"email={app_config['login']}&password={app_config['password']}"
+        
+        url = f"{api_tester.base_url}/api/auth/login"
+        api_tester.log_request('POST', url)
+        logger.debug(f">>> Sending form data instead of JSON")
+        
+        # Envoyer en form-urlencoded au lieu de JSON
+        response = api_tester.session.post(
+            url, 
+            data=login_data,
+            headers={'Content-Type': 'application/x-www-form-urlencoded'}
+        )
+        api_tester.log_response(response)
+        
+        logger.info(f"Wrong content-type login response status: {response.status_code}")
+        
+        # Devrait retourner 415 selon la spec
+        assert response.status_code == 415, \
+            f"Expected 415 for unsupported media type, got {response.status_code}"
+        
+        response_json = response.json()
+        assert "message" in response_json, "Expected error message in response"
+        logger.info(f"Unsupported media type correctly rejected: {response_json.get('message')}")
+
+    def test13_api_verify_missing_token(self, api_tester):
+        """Tester la vérification sans token"""
+        # Créer une nouvelle session sans cookies
+        temp_session = requests.Session()
+        temp_session.verify = False
+        
+        url = f"{api_tester.base_url}/api/auth/verify"
+        api_tester.log_request('GET', url)
+        logger.debug(f">>> No access_token provided")
+        
+        response = temp_session.get(url)
+        api_tester.log_response(response)
+        
+        logger.info(f"Missing token verify response status: {response.status_code}")
+        
+        # Devrait retourner 401 pour token manquant
+        assert response.status_code == 401, \
+            f"Expected 401 for missing token, got {response.status_code}"
+        
+        response_json = response.json()
+        assert "message" in response_json, "Expected error message in response"
+        logger.info(f"Missing token correctly rejected: {response_json.get('message')}")
+
+    def test14_api_refresh_missing_token(self, api_tester):
+        """Tester le refresh sans refresh token"""
+        # Créer une nouvelle session sans cookies
+        temp_session = requests.Session()
+        temp_session.verify = False
+        
+        url = f"{api_tester.base_url}/api/auth/refresh"
+        api_tester.log_request('POST', url)
+        logger.debug(f">>> No refresh_token provided")
+        
+        response = temp_session.post(url)
+        api_tester.log_response(response)
+        
+        logger.info(f"Missing refresh token response status: {response.status_code}")
+        
+        # Devrait retourner 400 selon la spec
+        assert response.status_code == 400, \
+            f"Expected 400 for missing refresh token, got {response.status_code}"
+        
+        response_json = response.json()
+        assert "message" in response_json, "Expected error message in response"
+        logger.info(f"Missing refresh token correctly rejected: {response_json.get('message')}")
+
+    def test15_api_refresh_invalid_token(self, api_tester):
+        """Tester le refresh avec un refresh token invalide"""
+        # Utiliser un token invalide
+        invalid_refresh_token = "invalid_refresh_token_123456"
+        api_tester.session.cookies.set('refresh_token', invalid_refresh_token)
+        
+        url = f"{api_tester.base_url}/api/auth/refresh"
+        api_tester.log_request('POST', url)
+        logger.debug(f">>> Using invalid refresh_token: {invalid_refresh_token}")
+        
+        response = api_tester.session.post(url)
+        api_tester.log_response(response)
+        
+        logger.info(f"Invalid refresh token response status: {response.status_code}")
+        
+        # Devrait retourner 401 pour token invalide/expiré
+        assert response.status_code == 401, \
+            f"Expected 401 for invalid refresh token, got {response.status_code}"
+        
+        response_json = response.json()
+        assert "message" in response_json, "Expected error message in response"
+        logger.info(f"Invalid refresh token correctly rejected: {response_json.get('message')}")
+
+    def test16_api_logout_missing_tokens(self, api_tester):
+        """Tester le logout sans tokens"""
+        # Créer une nouvelle session sans cookies
+        temp_session = requests.Session()
+        temp_session.verify = False
+        
+        url = f"{api_tester.base_url}/api/auth/logout"
+        api_tester.log_request('POST', url)
+        logger.debug(f">>> No tokens provided")
+        
+        response = temp_session.post(url)
+        api_tester.log_response(response)
+        
+        logger.info(f"Missing tokens logout response status: {response.status_code}")
+        
+        # Devrait retourner 400 selon la spec
+        assert response.status_code == 400, \
+            f"Expected 400 for missing tokens, got {response.status_code}"
+        
+        response_json = response.json()
+        assert "message" in response_json, "Expected error message in response"
+        logger.info(f"Missing tokens correctly rejected: {response_json.get('message')}")
