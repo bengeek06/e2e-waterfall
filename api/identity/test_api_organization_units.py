@@ -237,7 +237,6 @@ class TestAPIOrganizationUnits:
         
         logger.info(f"✅ Child organization unit created: {result['id']}")
 
-    @pytest.mark.xfail(reason="API bug: endpoint /organization_units/{id}/children returns 404")
     def test05_get_children_units(self, api_tester, auth_token, setup_test_data):
         """Tester GET /organization_units/{id}/children"""
         company_id, cookies_dict, resources = setup_test_data
