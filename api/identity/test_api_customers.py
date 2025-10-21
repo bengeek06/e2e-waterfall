@@ -131,11 +131,6 @@ class TestAPICustomers:
         
         logger.info(f"✅ Retrieved {len(result)} customers")
 
-    @pytest.mark.xfail(reason="API bug: company_id expects integer but should accept UUID")
-    def test03_get_customer_by_id(self, api_tester, auth_token, setup_test_data):
-        """Tester GET /customers/{id}"""
-
-    @pytest.mark.xfail(reason="API bug: company_id expects integer but should accept UUID")
     def test02_create_customer(self, api_tester, auth_token, setup_test_data):
         """Tester POST /customers"""
         company_id, cookies_dict, resources = setup_test_data
@@ -163,7 +158,6 @@ class TestAPICustomers:
         
         logger.info(f"✅ Customer created: {result['id']}")
 
-    @pytest.mark.xfail(reason="API bug: company_id expects integer but should accept UUID")
     def test03_get_customer_by_id(self, api_tester, auth_token, setup_test_data):
         """Tester GET /customers/{id}"""
         company_id, cookies_dict, resources = setup_test_data
@@ -198,7 +192,6 @@ class TestAPICustomers:
         
         logger.info(f"✅ Customer retrieved: {result['name']}")
 
-    @pytest.mark.xfail(reason="API bug: company_id expects integer but should accept UUID")
     def test04_patch_customer(self, api_tester, auth_token, setup_test_data):
         """Tester PATCH /customers/{id}"""
         company_id, cookies_dict, resources = setup_test_data
@@ -237,7 +230,6 @@ class TestAPICustomers:
         
         logger.info(f"✅ Customer patched successfully")
 
-    @pytest.mark.xfail(reason="API bug: company_id expects integer but should accept UUID")
     def test05_put_customer(self, api_tester, auth_token, setup_test_data):
         """Tester PUT /customers/{id}"""
         company_id, cookies_dict, resources = setup_test_data
@@ -277,7 +269,6 @@ class TestAPICustomers:
         
         logger.info(f"✅ Customer updated successfully")
 
-    @pytest.mark.xfail(reason="API bug: company_id expects integer but should accept UUID")
     def test06_delete_customer(self, api_tester, auth_token, setup_test_data):
         """Tester DELETE /customers/{id}"""
         company_id, cookies_dict, resources = setup_test_data
