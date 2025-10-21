@@ -4,13 +4,30 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 import time
+import requests
 
 class TestApplicationInit:
-    """Parcours complet d'initialisation de l'application"""
+    """Tests d'initialisation de l'application - autonomes et reproductibles"""
+    
+    @pytest.fixture(scope="class")
+    def check_init_status(self, app_config):
+        """Vérifier si l'application est déjà initialisée"""
+        web_url = app_config['web_url']
+        try:
+            response = requests.get(f"{web_url}/api/identity/init-db", verify=False, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get('initialized', False)
+        except:
+            pass
+        return False
     
     @pytest.mark.order(1)
-    def test_01_access_index_redirects_to_init(self, driver, app_config, app_session):
+    def test_01_access_index_redirects_to_init(self, driver, app_config, check_init_status):
         """Étape 1: Accès à l'index redirige vers init-app si l'app n'est pas initialisée"""
+        if check_init_status:
+            pytest.skip("Application déjà initialisée - test non applicable")
+        
         web_url = app_config['web_url']
         
         # Accéder à la page d'accueil
@@ -25,8 +42,17 @@ class TestApplicationInit:
         print(f"✓ Redirection automatique vers {driver.current_url}")
     
     @pytest.mark.order(2)
-    def test_02_init_page_contains_form_elements(self, driver, app_config):
+    def test_02_init_page_contains_form_elements(self, driver, app_config, check_init_status):
         """Étape 2: Vérifier que la page d'initialisation contient tous les éléments du formulaire"""
+        if check_init_status:
+            pytest.skip("Application déjà initialisée - test non applicable")
+        
+        web_url = app_config['web_url']
+        
+        # S'assurer qu'on est sur la page init-app
+        if "/init-app" not in driver.current_url:
+            driver.get(f"{web_url}/init-app")
+        
         # Vérifier la présence de tous les champs du formulaire
         wait = WebDriverWait(driver, 10)
         
@@ -56,8 +82,11 @@ class TestApplicationInit:
         print("✓ Bouton 'submit' trouvé et affiché")
     
     @pytest.mark.order(3)
-    def test_03_fill_initialization_form(self, driver, app_config, app_session):
+    def test_03_fill_initialization_form(self, driver, app_config, check_init_status):
         """Étape 3: Remplir et soumettre le formulaire d'initialisation"""
+        if check_init_status:
+            pytest.skip("Application déjà initialisée - test non applicable")
+        
         # Récupérer les données de configuration
         company_name = app_config['company_name']
         login = app_config['login']
@@ -114,9 +143,6 @@ class TestApplicationInit:
         password_confirm_field.send_keys(password)
         print("✓ Champ 'passwordConfirm' rempli")
         
-        # Sauvegarder l'état avant soumission
-        app_session.current_user = login
-        
         # Petit délai pour s'assurer que tous les champs sont bien remplis
         time.sleep(1)
         
@@ -126,8 +152,11 @@ class TestApplicationInit:
         print("✓ Formulaire soumis")
     
     @pytest.mark.order(4)
-    def test_04_verify_redirect_to_auth_after_init(self, driver, app_config, app_session):
+    def test_04_verify_redirect_to_auth_after_init(self, driver, app_config, check_init_status):
         """Étape 4: Vérifier la redirection vers la page d'authentification après initialisation"""
+        if check_init_status:
+            pytest.skip("Application déjà initialisée - test non applicable")
+        
         # Attendre la redirection vers la page d'authentification
         wait = WebDriverWait(driver, 15)  # Délai plus long pour l'initialisation DB
         
@@ -135,9 +164,6 @@ class TestApplicationInit:
             # Attendre que l'URL contienne /login
             wait.until(lambda d: "/login" in d.current_url)
             print(f"✓ Redirection réussie vers: {driver.current_url}")
-            
-            # Marquer l'application comme initialisée
-            app_session.is_initialized = True
             
             # Vérifier qu'on est bien sur la page de login
             assert "/login" in driver.current_url
@@ -150,26 +176,28 @@ class TestApplicationInit:
             raise
     
     @pytest.mark.order(5)
-    def test_05_verify_redirect_to_auth_page(self, driver, app_session):
+    def test_05_verify_redirect_to_auth_page(self, driver, check_init_status):
         """Étape 5: Vérifier la redirection vers la page d'authentification après initialisation"""
+        if check_init_status:
+            pytest.skip("Application déjà initialisée - test non applicable")
+        
         # Vérifier qu'on est bien sur la page de login après l'initialisation
         assert "/login" in driver.current_url, f"Attendu /login après initialisation, mais sur {driver.current_url}"
-        
-        # L'application est maintenant initialisée (company et user créés)
-        app_session.is_initialized = True
         
         print(f"✓ Redirection réussie vers la page d'authentification: {driver.current_url}")
         print("✓ Application initialisée avec succès")
         print("✓ Company et user admin créés")
         print("✓ Page d'authentification prête")
-        print("Note: Les tests de connexion sont dans login/test_login.py")
     
     @pytest.mark.order(6)
-    def test_06_verify_app_initialized_on_index_access(self, driver, app_config, app_session):
-        """Étape 6: Vérifier qu'un accès à l'index ne redirige plus vers init-app"""
+    def test_06_verify_app_initialized_on_index_access(self, driver, app_config, check_init_status):
+        """Étape 6: Vérifier qu'un accès à l'index ne redirige plus vers init-app quand l'app est initialisée"""
+        if not check_init_status:
+            pytest.skip("Application non initialisée - ce test nécessite une app initialisée")
+        
         web_url = app_config['web_url']
         
-        # Accéder à nouveau à la page d'accueil
+        # Accéder à la page d'accueil
         driver.get(web_url)
         
         # Attendre un moment pour voir si redirection
@@ -187,6 +215,3 @@ class TestApplicationInit:
             print("✓ Redirection vers login (comportement attendu pour app non connectée)")
         else:
             print("✓ Accès direct à l'index autorisé")
-        
-        # Confirmer que l'application est maintenant initialisée
-        assert app_session.is_initialized, "L'état de session devrait indiquer que l'app est initialisée"
