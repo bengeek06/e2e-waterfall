@@ -3,3 +3,5 @@ pytest
 python-dotenv
 webdriver-manager
 pytest-order
+colorlog
+structlog

@@ -5,9 +5,60 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 import time
+import requests
 
 class TestUserLogin:
-    """Parcours complet de connexion utilisateur"""
+    """Tests de connexion utilisateur - autonomes et reproductibles"""
+    
+    @pytest.fixture(scope="class", autouse=True)
+    def ensure_app_initialized(self, app_config, driver):
+        """S'assurer que l'application est initialisée avant de tester le login"""
+        web_url = app_config['web_url']
+        
+        # Vérifier si l'application est initialisée
+        try:
+            response = requests.get(f"{web_url}/api/identity/init-db", verify=False, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('initialized', False):
+                    print("✓ Application déjà initialisée - prêt pour les tests de login")
+                    return True
+        except Exception as e:
+            print(f"⚠️ Erreur lors de la vérification de l'initialisation: {e}")
+        
+        # Si pas initialisée, on l'initialise MAINTENANT
+        print("⚠️ Application non initialisée - initialisation automatique en cours...")
+        
+        driver.get(f"{web_url}/init-app")
+        wait = WebDriverWait(driver, 10)
+        
+        # Remplir le formulaire d'initialisation
+        company_field = wait.until(EC.element_to_be_clickable((By.ID, "company")))
+        company_field.clear()
+        company_field.send_keys(app_config['company_name'])
+        
+        user_field = wait.until(EC.element_to_be_clickable((By.ID, "user")))
+        user_field.clear()
+        user_field.send_keys(app_config['login'])
+        
+        password_field = wait.until(EC.element_to_be_clickable((By.ID, "password")))
+        password_field.clear()
+        password_field.send_keys(app_config['password'])
+        
+        password_confirm_field = wait.until(EC.element_to_be_clickable((By.ID, "passwordConfirm")))
+        password_confirm_field.clear()
+        password_confirm_field.send_keys(app_config['password'])
+        
+        time.sleep(1)
+        
+        submit_button = wait.until(EC.element_to_be_clickable((By.ID, "submit")))
+        submit_button.click()
+        
+        # Attendre la redirection vers login
+        wait.until(lambda d: "/login" in d.current_url)
+        print("✓ Application initialisée avec succès - prêt pour les tests de login")
+        
+        return True
     
     @pytest.mark.order(1)
     def test_01_access_login_page_directly(self, driver, app_config):
@@ -25,20 +76,26 @@ class TestUserLogin:
     @pytest.mark.order(2)
     def test_02_verify_login_form_elements(self, driver, app_config):
         """Étape 2: Vérifier la présence des éléments du formulaire de login"""
+        web_url = app_config['web_url']
+        
+        # S'assurer qu'on est sur la page login
+        if "/login" not in driver.current_url:
+            driver.get(f"{web_url}/login")
+        
         wait = WebDriverWait(driver, 10)
         
         # Vérifier le champ email
-        email_field = wait.until(EC.presence_of_element_located((By.ID, "email")))
+        email_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '[data-testid="login-email-input"]')))
         assert email_field.is_displayed()
         print("✓ Champ 'email' trouvé et affiché")
         
         # Vérifier le champ password
-        password_field = driver.find_element(By.ID, "password")
+        password_field = driver.find_element(By.CSS_SELECTOR, '[data-testid="login-password-input"]')
         assert password_field.is_displayed()
         print("✓ Champ 'password' trouvé et affiché")
         
         # Vérifier le bouton submit
-        submit_button = driver.find_element(By.ID, "submit")
+        submit_button = driver.find_element(By.CSS_SELECTOR, '[data-testid="login-submit-button"]')
         assert submit_button.is_displayed()
         print("✓ Bouton 'submit' trouvé et affiché")
         
@@ -48,33 +105,38 @@ class TestUserLogin:
         print("✓ Types de champs validés")
     
     @pytest.mark.order(3)
-    def test_03_perform_successful_login(self, driver, app_config, app_session):
+    def test_03_perform_successful_login(self, driver, app_config):
         """Étape 3: Effectuer une connexion réussie"""
+        web_url = app_config['web_url']
+        
+        # S'assurer qu'on est sur la page login
+        if "/login" not in driver.current_url:
+            driver.get(f"{web_url}/login")
+            time.sleep(1)
+        
         # Récupérer les identifiants depuis la configuration
         login_email = app_config['login']
         login_password = app_config['password']
         
+        wait = WebDriverWait(driver, 10)
+        
         # Remplir le formulaire de connexion
-        email_field = driver.find_element(By.ID, "email")
+        email_field = driver.find_element(By.CSS_SELECTOR, '[data-testid="login-email-input"]')
         email_field.clear()
         email_field.send_keys(login_email)
         print(f"✓ Email saisi: {login_email}")
         
-        password_field = driver.find_element(By.ID, "password")
+        password_field = driver.find_element(By.CSS_SELECTOR, '[data-testid="login-password-input"]')
         password_field.clear()
         password_field.send_keys(login_password)
         print("✓ Mot de passe saisi")
         
-        # Sauvegarder l'utilisateur dans la session
-        app_session.current_user = login_email
-        
-        # Soumettre le formulaire
-        submit_button = driver.find_element(By.ID, "submit")
-        submit_button.click()
-        print("✓ Formulaire de connexion soumis")
+        # Soumettre le formulaire en appuyant sur Enter
+        password_field.send_keys(Keys.RETURN)
+        print("✓ Formulaire de connexion soumis (Enter)")
     
     @pytest.mark.order(4)
-    def test_04_verify_successful_redirect_to_welcome(self, driver, app_config, app_session):
+    def test_04_verify_successful_redirect_to_welcome(self, driver, app_config):
         """Étape 4: Vérifier la redirection vers /welcome après connexion réussie"""
         # Attendre la redirection vers /welcome
         wait = WebDriverWait(driver, 15)
@@ -83,9 +145,6 @@ class TestUserLogin:
             # Attendre que l'URL contienne /welcome
             wait.until(lambda d: "/welcome" in d.current_url)
             print(f"✓ Redirection réussie vers: {driver.current_url}")
-            
-            # Marquer l'utilisateur comme connecté
-            app_session.is_logged_in = True
             
             # Vérifier qu'on est bien sur la page welcome
             assert "/welcome" in driver.current_url
@@ -108,14 +167,13 @@ class TestUserLogin:
             raise
     
     @pytest.mark.order(5)
-    def test_05_save_authentication_cookies(self, driver, app_session):
-        """Étape 5: Sauvegarder les cookies de session après connexion"""
+    def test_05_save_authentication_cookies(self, driver):
+        """Étape 5: Vérifier les cookies de session après connexion"""
         # Récupérer tous les cookies après connexion
         cookies = driver.get_cookies()
-        app_session.cookies = cookies
         
         # Afficher les cookies pour debug
-        print(f"✓ {len(cookies)} cookies sauvegardés après connexion:")
+        print(f"✓ {len(cookies)} cookies trouvés après connexion:")
         session_cookies = []
         for cookie in cookies:
             if 'httpOnly' in cookie and cookie.get('httpOnly'):
@@ -134,24 +192,14 @@ class TestUserLogin:
             print("⚠️ Aucun cookie httpOnly détecté - vérifier l'implémentation de session")
     
     @pytest.mark.order(6)
-    def test_06_verify_authenticated_state(self, driver, app_config, app_session):
+    def test_06_verify_authenticated_state(self, driver, app_config):
         """Étape 6: Vérifier que l'utilisateur est bien authentifié"""
-        # Vérifier l'état de session
-        assert app_session.is_logged_in, "L'état de session devrait indiquer que l'utilisateur est connecté"
-        assert app_session.current_user == app_config['login'], "L'utilisateur courant devrait correspondre au login"
-        
-        # Optionnel: tenter d'accéder à une page qui nécessite l'authentification
         web_url = app_config['web_url']
         
-        # Restaurer les cookies avant de naviguer
-        if app_session.cookies:
-            for cookie in app_session.cookies:
-                try:
-                    driver.add_cookie(cookie)
-                except Exception as e:
-                    print(f"⚠️ Impossible d'ajouter le cookie {cookie.get('name', 'unknown')}: {e}")
+        # Sauvegarder les cookies actuels
+        cookies = driver.get_cookies()
         
-        # Accéder à nouveau à l'index pour voir le comportement
+        # Accéder à l'index pour voir le comportement avec session active
         driver.get(web_url)
         time.sleep(2)
         

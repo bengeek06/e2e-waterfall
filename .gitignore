@@ -61,6 +61,10 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Test logs
+logs/
+*.log
+
 # Flask stuff:
 instance/
 .webassets-cache
@@ -208,3 +212,5 @@ __marimo__/
 
 # vscode
 .vscode/
+
+.spec/
