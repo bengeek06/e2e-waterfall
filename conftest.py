@@ -7,6 +7,10 @@ from pytest import fixture
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from webdriver_manager.chrome import ChromeDriverManager
+import urllib3
+
+# Désactiver les warnings SSL pour les tests (certificats auto-signés)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.', '.env.test'))
 
@@ -251,3 +255,11 @@ def ensure_app_initialized(app_config):
     logger.info("=" * 60)
     logger.info("Test session completed")
     logger.info("=" * 60)
+
+
+# Hook pytest pour ajouter un délai entre les tests (éviter 503)
+def pytest_runtest_teardown(item, nextitem):
+    """Ajouter un petit délai entre les tests pour éviter de surcharger le backend"""
+    if nextitem is not None:
+        import time
+        time.sleep(0.1)  # 100ms de pause entre chaque test
