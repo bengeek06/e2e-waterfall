@@ -196,6 +196,9 @@ class TestAPICommunication:
 
     def test06_api_verify_invalid_token(self, api_tester):
         """Tester la vérification avec un token invalide"""
+        # Nettoyer tous les cookies existants pour éviter l'interférence avec les tests précédents
+        api_tester.session.cookies.clear()
+        
         # Utiliser un token invalide
         invalid_token = "invalid.token.here"
         api_tester.session.cookies.set('access_token', invalid_token)
