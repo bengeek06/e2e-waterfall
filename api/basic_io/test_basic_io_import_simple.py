@@ -57,6 +57,24 @@ class BasicIOAPITester:
         except Exception:
             logger.debug(f"<<< Response body (text): {response.text[:200]}")
 
+    def find_organization_units_by_name(self, name: str, company_id: str, cookies: dict):
+        """Return list of organization unit IDs matching exact name and company_id
+
+        The identity service doesn't provide a dedicated search in tests, so
+        retrieve the list and filter client-side.
+        """
+        try:
+            resp = self.session.get(f"{self.base_url}/api/identity/organization_units", cookies=cookies)
+            if resp.status_code != 200:
+                logger.debug(f"Failed to list organization_units for cleanup: {resp.status_code}")
+                return []
+            data = resp.json()
+            matches = [r['id'] for r in data if r.get('name') == name and str(r.get('company_id')) == str(company_id)]
+            return matches
+        except Exception as e:
+            logger.warning(f"Exception when listing organization_units: {e}")
+            return []
+
 
 class TestBasicIOImportSimple:
     """Tests d'import simple via Basic I/O API"""
@@ -128,27 +146,23 @@ class TestBasicIOImportSimple:
                 "description": "Imported via JSON test 3"
             }
         ]
-        
         created_ids = []
+        created_names = [f"Imported_Unit_1_{timestamp}", f"Imported_Unit_2_{timestamp}", f"Imported_Unit_3_{timestamp}"]
         
         try:
-            # Import via Basic I/O
-            target_url = "http://identity_service:5000/organization_units"
-            
-            url = f"{api_tester.base_url}/api/basic-io/import"
-            
-            # Créer un fichier JSON en mémoire
+            # Préparer le payload JSON et envoyer via le proxy
             json_file = io.BytesIO(json.dumps(import_data).encode('utf-8'))
-            
             files = {
-                'file': ('import_data.json', json_file, 'application/json')
+                'file': ('data.json', json_file, 'application/json')
             }
-            
+
             data = {
-                'url': target_url,
+                'url': 'http://identity_service:5000/organization_units',
                 'type': 'json'
             }
-            
+
+            url = f"{api_tester.base_url}/api/basic-io/import"
+
             api_tester.log_request('POST', url, data)
             response = api_tester.session.post(
                 url,
@@ -157,38 +171,51 @@ class TestBasicIOImportSimple:
                 cookies=auth_token
             )
             api_tester.log_response(response)
-            
+
             # Import retourne 201 Created en cas de succès
             assert response.status_code == 201, \
                 f"Import failed with status {response.status_code}: {response.text}"
-            
+
             # Vérifier la réponse d'import
             result = response.json()
-            
+
             # Structure: {import_report: {...}, resolution_report: {...}}
             assert 'import_report' in result, "Missing import_report in response"
-            
+
             import_report = result['import_report']
-            
+
             logger.info(f"✅ Import response: {result}")
-            
+
             # Vérifier le rapport d'import
             assert 'total' in import_report, "Missing total in import_report"
             assert 'success' in import_report, "Missing success in import_report"
-            
+
             total = import_report['total']
             success = import_report['success']
-            
+
             assert total == 3, f"Expected 3 records total, got {total}"
             assert success == 3, f"Expected 3 successful imports, got {success}"
-            
+
+            # Récupérer les IDs créés pour le cleanup
+            if 'id_mapping' in import_report:
+                created_ids = list(import_report['id_mapping'].values())
+                logger.info(f"Created organization unit IDs: {created_ids}")
+
             logger.info(f"✅ Successfully imported {success}/{total} records")
         
         finally:
             # Cleanup: Supprimer les records importés
-            if created_ids:
-                logger.info(f"🧹 Cleaning up {len(created_ids)} imported units...")
-                for unit_id in created_ids:
+            # If API returned id_mapping use it; else fallback to searching by name
+            ids_to_delete = list(created_ids)
+            if not ids_to_delete:
+                for name in created_names:
+                    found = api_tester.find_organization_units_by_name(name, company_id, auth_token)
+                    if found:
+                        ids_to_delete.extend(found)
+
+            if ids_to_delete:
+                logger.info(f"🧹 Cleaning up {len(ids_to_delete)} imported units...")
+                for unit_id in ids_to_delete:
                     try:
                         api_tester.session.delete(
                             f"{api_tester.base_url}/api/identity/organization_units/{unit_id}",
@@ -210,6 +237,7 @@ Imported_CSV_Unit_2_{timestamp},{company_id},Imported via CSV test 2
 Imported_CSV_Unit_3_{timestamp},{company_id},Imported via CSV test 3"""
         
         created_ids = []
+        created_names = [f"Imported_CSV_Unit_1_{timestamp}", f"Imported_CSV_Unit_2_{timestamp}", f"Imported_CSV_Unit_3_{timestamp}"]
         
         try:
             # Créer un fichier CSV en mémoire
@@ -261,10 +289,18 @@ Imported_CSV_Unit_3_{timestamp},{company_id},Imported via CSV test 3"""
             logger.info(f"✅ Successfully imported {success}/{total} CSV records")
         
         finally:
-            # Cleanup
-            if created_ids:
-                logger.info(f"🧹 Cleaning up {len(created_ids)} imported units...")
-                for unit_id in created_ids:
+            # Cleanup: Supprimer les records importés
+            # If API returned id_mapping use it; else fallback to searching by name
+            ids_to_delete = list(created_ids)
+            if not ids_to_delete:
+                for name in created_names:
+                    found = api_tester.find_organization_units_by_name(name, company_id, auth_token)
+                    if found:
+                        ids_to_delete.extend(found)
+
+            if ids_to_delete:
+                logger.info(f"🧹 Cleaning up {len(ids_to_delete)} imported units...")
+                for unit_id in ids_to_delete:
                     try:
                         api_tester.session.delete(
                             f"{api_tester.base_url}/api/identity/organization_units/{unit_id}",
@@ -472,51 +508,83 @@ Missing,"columns"""
             }
         ]
         
-        target_url = "http://identity_service:5000/organization_units"
+        created_ids = []
+        created_names = [f"Valid_Unit_{timestamp}"]
         
-        url = f"{api_tester.base_url}/api/basic-io/import"
+        try:
+            target_url = "http://identity_service:5000/organization_units"
+            
+            url = f"{api_tester.base_url}/api/basic-io/import"
+            
+            json_file = io.BytesIO(json.dumps(import_data).encode('utf-8'))
+            
+            files = {
+                'file': ('partial.json', json_file, 'application/json')
+            }
+            
+            data = {
+                'url': target_url,
+                'type': 'json'
+            }
+            
+            api_tester.log_request('POST', url, data)
+            response = api_tester.session.post(
+                url,
+                files=files,
+                data=data,
+                cookies=auth_token
+            )
+            api_tester.log_response(response)
+            
+            # Le service fait un import partiel avec 207 Multi-Status
+            assert response.status_code == 207, \
+                f"Expected 207 for partial import, got {response.status_code}"
+            
+            result = response.json()
+            assert 'import_report' in result, "Missing import_report"
+            
+            import_report = result['import_report']
+            
+            total = import_report.get('total', 0)
+            success = import_report.get('success', 0)
+            failed = import_report.get('failed', 0)
+            
+            assert total == 2, f"Expected 2 total records, got {total}"
+            assert success == 1, f"Expected 1 successful import, got {success}"
+            assert failed == 1, f"Expected 1 failed import, got {failed}"
+            
+            # Vérifier le rapport d'erreurs
+            errors = import_report.get('errors', [])
+            assert len(errors) >= 1, "Expected at least 1 error in report"
+            
+            # Récupérer les IDs créés pour le cleanup
+            if 'id_mapping' in import_report:
+                created_ids = list(import_report['id_mapping'].values())
+                logger.info(f"Created organization unit IDs: {created_ids}")
+            
+            logger.info("✅ Partial import successful with 207 Multi-Status")
+            logger.info(f"Import result: {success} success, {failed} failed")
+            logger.info(f"Error: {errors[0] if errors else 'N/A'}")
         
-        json_file = io.BytesIO(json.dumps(import_data).encode('utf-8'))
-        
-        files = {
-            'file': ('partial.json', json_file, 'application/json')
-        }
-        
-        data = {
-            'url': target_url,
-            'type': 'json'
-        }
-        
-        api_tester.log_request('POST', url, data)
-        response = api_tester.session.post(
-            url,
-            files=files,
-            data=data,
-            cookies=auth_token
-        )
-        api_tester.log_response(response)
-        
-        # Le service fait un import partiel avec 207 Multi-Status
-        assert response.status_code == 207, \
-            f"Expected 207 for partial import, got {response.status_code}"
-        
-        result = response.json()
-        assert 'import_report' in result, "Missing import_report"
-        
-        import_report = result['import_report']
-        
-        total = import_report.get('total', 0)
-        success = import_report.get('success', 0)
-        failed = import_report.get('failed', 0)
-        
-        assert total == 2, f"Expected 2 total records, got {total}"
-        assert success == 1, f"Expected 1 successful import, got {success}"
-        assert failed == 1, f"Expected 1 failed import, got {failed}"
-        
-        # Vérifier le rapport d'erreurs
-        errors = import_report.get('errors', [])
-        assert len(errors) >= 1, "Expected at least 1 error in report"
-        
-        logger.info("✅ Partial import successful with 207 Multi-Status")
-        logger.info(f"Import result: {success} success, {failed} failed")
-        logger.info(f"Error: {errors[0] if errors else 'N/A'}")
+        finally:
+            # Cleanup: Supprimer le record qui a réussi
+            # If API returned id_mapping use it; else fallback to searching by name
+            ids_to_delete = list(created_ids)
+            if not ids_to_delete:
+                for name in created_names:
+                    found = api_tester.find_organization_units_by_name(name, company_id, auth_token)
+                    if found:
+                        ids_to_delete.extend(found)
+
+            if ids_to_delete:
+                logger.info(f"🧹 Cleaning up {len(ids_to_delete)} imported units...")
+                for unit_id in ids_to_delete:
+                    try:
+                        api_tester.session.delete(
+                            f"{api_tester.base_url}/api/identity/organization_units/{unit_id}",
+                            cookies=auth_token
+                        )
+                        logger.info(f"Deleted unit: {unit_id}")
+                    except Exception as e:
+                        logger.error(f"Error deleting unit {unit_id}: {e}")
+
