@@ -89,13 +89,26 @@ class TestAPICommunication:
             f"Expected user info in verify response. Got: {response_json}"
         logger.info("Token verified successfully")
 
-    def test05_api_refresh_token(self, api_tester, session_auth_cookies):
-        """Tester le rafraîchissement du token via l'API auth"""
-        assert session_auth_cookies is not None, "No auth cookies available for refresh test"
+    def test05_api_refresh_token(self, api_tester, app_config):
+        """Tester le rafraîchissement du token via l'API auth
         
-        # Ajouter les tokens aux cookies de la session
-        access_token = session_auth_cookies.get('access_token')
-        refresh_token = session_auth_cookies.get('refresh_token')
+        Note: Ce test fait son propre login pour éviter d'affecter les tokens de session.
+        """
+        # Faire un login dédié pour ce test
+        login_data = {
+            "email": app_config['login'],
+            "password": app_config['password']
+        }
+        
+        login_response = api_tester.session.post(
+            f"{api_tester.base_url}/api/auth/login",
+            json=login_data
+        )
+        assert login_response.status_code == 200, f"Login failed: {login_response.text}"
+        
+        # Récupérer les tokens de ce login spécifique
+        access_token = login_response.cookies.get('access_token')
+        refresh_token = login_response.cookies.get('refresh_token')
         
         assert refresh_token is not None, "No refresh token available"
         
@@ -155,15 +168,29 @@ class TestAPICommunication:
             f"Expected 401 or 403 for invalid token, got {response.status_code}: {response.text}"
         logger.info("Invalid token correctly rejected")
 
-    def test07_api_logout(self, api_tester, session_auth_cookies):
-        """Tester la déconnexion via l'API auth"""
-        assert session_auth_cookies is not None, "No auth cookies available for logout test"
+    def test07_api_logout(self, api_tester, app_config):
+        """Tester la déconnexion via l'API auth
         
-        # Ajouter tous les cookies d'authentification à la session
-        access_token = session_auth_cookies.get('access_token')
-        refresh_token = session_auth_cookies.get('refresh_token')
+        Note: Ce test fait son propre login pour éviter de révoquer le token de session
+        partagé par tous les autres tests.
+        """
+        # Faire un login dédié pour ce test (ne pas utiliser session_auth_cookies)
+        login_data = {
+            "email": app_config['login'],
+            "password": app_config['password']
+        }
         
-        logger.info(f"Available auth cookies: {list(session_auth_cookies.keys())}")
+        login_response = api_tester.session.post(
+            f"{api_tester.base_url}/api/auth/login",
+            json=login_data
+        )
+        assert login_response.status_code == 200, f"Login failed: {login_response.text}"
+        
+        # Récupérer les tokens de ce login spécifique
+        access_token = login_response.cookies.get('access_token')
+        refresh_token = login_response.cookies.get('refresh_token')
+        
+        logger.info(f"Dedicated login for logout test successful")
         
         if access_token:
             api_tester.session.cookies.set('access_token', access_token)
