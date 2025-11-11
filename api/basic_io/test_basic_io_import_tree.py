@@ -27,28 +27,11 @@ BASE_URL = "http://localhost:3000/api/basic-io"
 IDENTITY_URL = "http://localhost:3000/api/identity"
 
 
-class BasicIOAPITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        self.session.verify = False
-    
-    def login(self, email: str, password: str) -> str:
-        """Login and return access token"""
-        login_data = {"email": email, "password": password}
-        response = self.session.post(
-            f"{self.base_url}/api/auth/login",
-            json=login_data
-        )
-        assert response.status_code == 200, f"Login failed: {response.text}"
-        return response.cookies.get('access_token')
-
-
 @pytest.mark.order(634)
 class TestBasicIOImportTree:
     """Test suite for Basic I/O tree structure import operations"""
 
-    def test34_import_tree_json_nested(self, session_auth_token, session_user_info):
+    def test34_import_tree_json_nested(self, api_tester, session_auth_cookies, session_user_info):
         """
         Test 34: Import tree structure with UUID references and parent_id
         
@@ -69,7 +52,6 @@ class TestBasicIOImportTree:
           - Backend Team (parent: eng-dept)
         """
         
-        auth_token = session_auth_token
         company_id = session_user_info['company_id']
         logger.info("\n" + "="*80)
         logger.info("TEST: Import tree structure with UUID references")
@@ -155,11 +137,11 @@ class TestBasicIOImportTree:
             }
             
             logger.info(f"Importing to: {data['url']}")
-            response = requests.post(
+            response = api_tester.session.post(
                 import_url,
                 files=files,
                 data=data,
-                cookies={"access_token": auth_token}
+                cookies=session_auth_cookies
             )
             
             logger.info(f"Response Status: {response.status_code}")
@@ -197,20 +179,20 @@ class TestBasicIOImportTree:
                 for org_unit_id in created_org_units:
                     try:
                         delete_url = f"{IDENTITY_URL}/organization_units/{org_unit_id}"
-                        requests.delete(delete_url, cookies={"access_token": auth_token})
+                        api_tester.session.delete(delete_url, cookies=session_auth_cookies)
                     except Exception as e:
                         logger.warning(f"Failed to delete org unit {org_unit_id}: {e}")
 
-    def test35_import_tree_json_flat_with_parent_id(self, session_auth_token, session_user_info):
+    def test35_import_tree_json_flat_with_parent_id(self, api_tester, session_auth_cookies, session_user_info):
         """Test import of flat JSON with parent_id references (requires topological sort)"""
         
-        auth_token = session_auth_token
+        # Using session_auth_cookies
         company_id = session_user_info['company_id']
         logger.info("\n" + "="*80)
         logger.info("TEST: Import flat JSON with parent_id requiring topological sort")
         logger.info("="*80)
 
-        auth_token = session_auth_token
+        # Using session_auth_cookies
         company_id = session_user_info['company_id']
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         created_org_units = []
@@ -265,11 +247,11 @@ class TestBasicIOImportTree:
             }
             
             logger.info(f"Importing to: {data['url']}")
-            response = requests.post(
+            response = api_tester.session.post(
                 import_url,
                 files=files,
                 data=data,
-                cookies={"access_token": auth_token}
+                cookies=session_auth_cookies
             )
             
             logger.info(f"Response Status: {response.status_code}")
@@ -315,14 +297,14 @@ class TestBasicIOImportTree:
                 for org_unit_id in reversed(created_org_units):
                     try:
                         delete_url = f"{IDENTITY_URL}/organization_units/{org_unit_id}"
-                        requests.delete(delete_url, cookies={"access_token": auth_token})
+                        api_tester.session.delete(delete_url, cookies=session_auth_cookies)
                     except Exception as e:
                         logger.warning(f"Failed to delete org unit {org_unit_id}: {e}")
 
-    def test36_import_tree_topological_sort(self, session_auth_token, session_user_info):
+    def test36_import_tree_topological_sort(self, api_tester, session_auth_cookies, session_user_info):
         """Test topological sort handles complex dependencies correctly"""
         
-        auth_token = session_auth_token
+        # Using session_auth_cookies
         company_id = session_user_info['company_id']
         logger.info("\n" + "="*80)
         logger.info("TEST: Topological sort with complex dependency graph")
@@ -374,11 +356,11 @@ class TestBasicIOImportTree:
             }
             
             logger.info(f"Importing to: {data['url']}")
-            response = requests.post(
+            response = api_tester.session.post(
                 import_url,
                 files=files,
                 data=data,
-                cookies={"access_token": auth_token}
+                cookies=session_auth_cookies
             )
             
             logger.info(f"Response Status: {response.status_code}")
@@ -414,14 +396,14 @@ class TestBasicIOImportTree:
                 for org_unit_id in reversed(created_org_units):
                     try:
                         delete_url = f"{IDENTITY_URL}/organization_units/{org_unit_id}"
-                        requests.delete(delete_url, cookies={"access_token": auth_token})
+                        api_tester.session.delete(delete_url, cookies=session_auth_cookies)
                     except Exception as e:
                         logger.warning(f"Failed to delete org unit {org_unit_id}: {e}")
 
-    def test37_import_tree_circular_reference_detection(self, session_auth_token, session_user_info):
+    def test37_import_tree_circular_reference_detection(self, api_tester, session_auth_cookies, session_user_info):
         """Test that circular references are detected and rejected"""
         
-        auth_token = session_auth_token
+        # Using session_auth_cookies
         company_id = session_user_info['company_id']
         logger.info("\n" + "="*80)
         logger.info("TEST: Circular reference detection (should fail)")
@@ -472,11 +454,11 @@ class TestBasicIOImportTree:
         }
         
         logger.info(f"Attempting import to: {data['url']}")
-        response = requests.post(
+        response = api_tester.session.post(
             import_url,
             files=files,
             data=data,
-            cookies={"access_token": auth_token}
+            cookies=session_auth_cookies
         )
         
         logger.info(f"Response Status: {response.status_code}")
@@ -495,10 +477,10 @@ class TestBasicIOImportTree:
         logger.info("✓ Circular reference correctly detected and rejected")
         logger.info(f"✓ Received 400 with appropriate error message")
 
-    def test38_import_tree_orphaned_nodes(self, session_auth_token, session_user_info):
+    def test38_import_tree_orphaned_nodes(self, api_tester, session_auth_cookies, session_user_info):
         """Test handling of orphaned nodes (parent_id references non-existent node)"""
         
-        auth_token = session_auth_token
+        # Using session_auth_cookies
         company_id = session_user_info['company_id']
         logger.info("\n" + "="*80)
         logger.info("TEST: Orphaned nodes (parent_id references missing node)")
@@ -557,11 +539,11 @@ class TestBasicIOImportTree:
             }
             
             logger.info(f"Importing to: {data['url']}")
-            response = requests.post(
+            response = api_tester.session.post(
                 import_url,
                 files=files,
                 data=data,
-                cookies={"access_token": auth_token}
+                cookies=session_auth_cookies
             )
             
             logger.info(f"Response Status: {response.status_code}")
@@ -600,14 +582,14 @@ class TestBasicIOImportTree:
                 for org_unit_id in reversed(created_org_units):
                     try:
                         delete_url = f"{IDENTITY_URL}/organization_units/{org_unit_id}"
-                        requests.delete(delete_url, cookies={"access_token": auth_token})
+                        api_tester.session.delete(delete_url, cookies=session_auth_cookies)
                     except Exception as e:
                         logger.warning(f"Failed to delete org unit {org_unit_id}: {e}")
 
-    def test39_import_tree_session_parent_mapping(self, session_auth_token, session_user_info):
+    def test39_import_tree_session_parent_mapping(self, api_tester, session_auth_cookies, session_user_info):
         """Test that parent_id mapping is maintained within import session"""
         
-        auth_token = session_auth_token
+        # Using session_auth_cookies
         company_id = session_user_info['company_id']
         logger.info("\n" + "="*80)
         logger.info("TEST: Parent ID mapping within import session")
@@ -664,11 +646,11 @@ class TestBasicIOImportTree:
             }
             
             logger.info(f"Importing to: {data['url']}")
-            response = requests.post(
+            response = api_tester.session.post(
                 import_url,
                 files=files,
                 data=data,
-                cookies={"access_token": auth_token}
+                cookies=session_auth_cookies
             )
             
             logger.info(f"Response Status: {response.status_code}")
@@ -712,7 +694,7 @@ class TestBasicIOImportTree:
             # Verify the children now reference the NEW parent ID
             # Fetch child 1
             get_url = f"{IDENTITY_URL}/organization_units/{new_child1_id}"
-            child1_response = requests.get(get_url, cookies={"access_token": auth_token})
+            child1_response = api_tester.session.get(get_url, cookies=session_auth_cookies)
             assert child1_response.status_code == 200
             child1_data = child1_response.json()
             
@@ -722,7 +704,7 @@ class TestBasicIOImportTree:
             
             # Fetch child 2
             get_url = f"{IDENTITY_URL}/organization_units/{new_child2_id}"
-            child2_response = requests.get(get_url, cookies={"access_token": auth_token})
+            child2_response = api_tester.session.get(get_url, cookies=session_auth_cookies)
             assert child2_response.status_code == 200
             child2_data = child2_response.json()
             
@@ -741,6 +723,6 @@ class TestBasicIOImportTree:
                 for org_unit_id in reversed(created_org_units):
                     try:
                         delete_url = f"{IDENTITY_URL}/organization_units/{org_unit_id}"
-                        requests.delete(delete_url, cookies={"access_token": auth_token})
+                        api_tester.session.delete(delete_url, cookies=session_auth_cookies)
                     except Exception as e:
                         logger.warning(f"Failed to delete org unit {org_unit_id}: {e}")
