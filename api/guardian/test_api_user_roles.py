@@ -15,94 +15,15 @@ from conftest import get_service_logger
 
 logger = get_service_logger('guardian')
 
-class APITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        self.session.verify = False
-        self.auth_cookies = None
-    
-    @staticmethod
-    def log_request(method, url, data=None, cookies=None):
-        """Log une requête HTTP avec détails"""
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            safe_data = data.copy() if isinstance(data, dict) else data
-            if isinstance(safe_data, dict) and 'password' in safe_data:
-                safe_data['password'] = '***'
-            logger.debug(f">>> Request body: {safe_data}")
-        if cookies:
-            for key, value in cookies.items():
-                display_value = f"{value[:50]}..." if len(value) > 50 else value
-                logger.debug(f">>> Using {key}: {display_value}")
-    
-    @staticmethod
-    def log_response(response):
-        """Log une réponse HTTP avec détails"""
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        logger.debug(f"<<< Response headers: {dict(response.headers)}")
-        try:
-            if response.text:
-                logger.debug(f"<<< Response body: {response.json()}")
-        except:
-            logger.debug(f"<<< Response body (raw): {response.text}")
-        
-    def set_auth_cookies(self, cookies):
-        """Définir les cookies d'authentification"""
-        self.auth_cookies = cookies
-        for cookie in cookies:
-            self.session.cookies.set(cookie.name, cookie.value, domain=cookie.domain, path=cookie.path)
-        
-    def wait_for_api(self, endpoint: str, timeout: int = 10) -> bool:
-        """Attendre qu'une API soit disponible"""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                logger.debug(f"wait_for_api - Status: {response.status_code}")
-                if response.status_code == 200:
-                    return True
-                elif response.status_code in [401, 403]:
-                    logger.warning(f"Authentication issue detected: {response.status_code}")
-                    return False
-            except requests.exceptions.RequestException as e:
-                logger.debug(f"Request exception: {e}")
-                pass
-            time.sleep(2)
-        return False
-
 class TestAPIUserRoles:
-    @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return APITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Obtenir un token d'authentification"""
-        assert api_tester.wait_for_api("/api/auth/version"), "API Auth not ready"
-        
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        if response.status_code == 200:
-            return response.cookies
-        return None
-    
     @pytest.fixture(scope="function")
-    def setup_test_data(self, api_tester, auth_token):
+    def setup_test_data(self, api_tester, session_auth_cookies):
         """Setup: Créer les données de test nécessaires pour chaque test"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         cookies_dict = {
-            'access_token': auth_token.get('access_token'),
-            'refresh_token': auth_token.get('refresh_token')
+            'access_token': session_auth_cookies.get('access_token'),
+            'refresh_token': session_auth_cookies.get('refresh_token')
         }
         
         # Récupérer user_id et company_id
@@ -161,7 +82,7 @@ class TestAPIUserRoles:
         
         logger.info("Cleanup completed")
 
-    def test01_get_user_roles_list(self, api_tester, auth_token, setup_test_data):
+    def test01_get_user_roles_list(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester GET /user-roles - Liste toutes les affectations user-role"""
         user_id, company_id, resources = setup_test_data
         
@@ -180,7 +101,7 @@ class TestAPIUserRoles:
         
         logger.info(f"✅ Retrieved {len(result)} user-role assignments")
 
-    def test02_create_user_role(self, api_tester, auth_token, setup_test_data):
+    def test02_create_user_role(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester POST /user-roles - Créer une affectation user-role"""
         user_id, company_id, resources = setup_test_data
         
@@ -234,7 +155,7 @@ class TestAPIUserRoles:
         
         logger.info(f"✅ User-role created successfully with ID: {result['id']}")
 
-    def test03_get_user_role_by_id(self, api_tester, auth_token, setup_test_data):
+    def test03_get_user_role_by_id(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester GET /user-roles/{id} - Récupérer une affectation user-role par ID"""
         user_id, company_id, resources = setup_test_data
         
@@ -290,7 +211,7 @@ class TestAPIUserRoles:
         
         logger.info(f"✅ User-role retrieved: {result}")
 
-    def test04_get_user_roles_filtered_by_user_id(self, api_tester, auth_token, setup_test_data):
+    def test04_get_user_roles_filtered_by_user_id(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester GET /user-roles?user_id={id} - Filtrer par user_id"""
         user_id, company_id, resources = setup_test_data
         
@@ -313,7 +234,7 @@ class TestAPIUserRoles:
         
         logger.info(f"✅ Retrieved {len(result)} user-roles for user {user_id}")
 
-    def test05_patch_user_role(self, api_tester, auth_token, setup_test_data):
+    def test05_patch_user_role(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester PATCH /user-roles/{id} - Mise à jour partielle"""
         user_id, company_id, resources = setup_test_data
         
@@ -390,7 +311,7 @@ class TestAPIUserRoles:
         
         logger.info(f"✅ User-role updated successfully to new role: {role2['id']}")
 
-    def test06_put_user_role(self, api_tester, auth_token, setup_test_data):
+    def test06_put_user_role(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester PUT /user-roles/{id} - Remplacement complet"""
         user_id, company_id, resources = setup_test_data
         
@@ -469,7 +390,7 @@ class TestAPIUserRoles:
         
         logger.info(f"✅ User-role fully updated successfully")
 
-    def test07_delete_user_role(self, api_tester, auth_token, setup_test_data):
+    def test07_delete_user_role(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester DELETE /user-roles/{id} - Supprimer une affectation user-role"""
         user_id, company_id, resources = setup_test_data
         

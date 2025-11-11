@@ -10,101 +10,15 @@ from conftest import get_service_logger
 
 logger = get_service_logger('guardian')
 
-class APITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        # Ignorer les certificats auto-signés pour les tests
-        self.session.verify = False
-        self.auth_cookies = None
-    
-    @staticmethod
-    def log_request(method, url, data=None, cookies=None):
-        """Log une requête HTTP avec détails"""
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            # Masquer les mots de passe dans les logs
-            safe_data = data.copy() if isinstance(data, dict) else data
-            if isinstance(safe_data, dict) and 'password' in safe_data:
-                safe_data['password'] = '***'
-            logger.debug(f">>> Request body: {safe_data}")
-        if cookies:
-            # Logger les cookies utilisés (tronqués pour sécurité)
-            for key, value in cookies.items():
-                display_value = f"{value[:50]}..." if len(value) > 50 else value
-                logger.debug(f">>> Using {key}: {display_value}")
-    
-    @staticmethod
-    def log_response(response):
-        """Log une réponse HTTP avec détails"""
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        logger.debug(f"<<< Response headers: {dict(response.headers)}")
-        try:
-            if response.text:
-                logger.debug(f"<<< Response body: {response.json()}")
-        except:
-            logger.debug(f"<<< Response body (raw): {response.text}")
-        
-    def set_auth_cookies(self, cookies):
-        """Définir les cookies d'authentification"""
-        self.auth_cookies = cookies
-        # Forcer l'ajout des cookies à la session
-        for cookie in cookies:
-            self.session.cookies.set(cookie.name, cookie.value, domain=cookie.domain, path=cookie.path)
-        
-    def wait_for_api(self, endpoint: str, timeout: int = 10) -> bool:
-        """Attendre qu'une API soit disponible"""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                logger.debug(f"wait_for_api - Status: {response.status_code}, Response: {response.text[:100]}...")
-                if response.status_code == 200:
-                    return True
-                elif response.status_code in [401, 403]:
-                    logger.warning(f"Authentication issue detected: {response.status_code}")
-                    return False  # Ne pas continuer si c'est un problème d'auth
-            except requests.exceptions.RequestException as e:
-                logger.debug(f"Request exception: {e}")
-                pass
-            time.sleep(2)
-        return False
-
 class TestAPIRoles:
-    @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return APITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Obtenir un token d'authentification"""
-        # Attendre que l'API auth soit prête
-        assert api_tester.wait_for_api("/api/auth/version"), "API Auth not ready"
-        
-        # Créer un utilisateur de test et s'authentifier
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        if response.status_code == 200:
-            # Retourner les cookies de réponse pour avoir accès aux deux tokens
-            return response.cookies
-        return None
-    
     @pytest.fixture(scope="function")
-    def setup_test_data(self, api_tester, auth_token):
+    def setup_test_data(self, api_tester, session_auth_cookies):
         """Setup: Créer les données de test nécessaires pour chaque test"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         cookies_dict = {
-            'access_token': auth_token.get('access_token'),
-            'refresh_token': auth_token.get('refresh_token')
+            'access_token': session_auth_cookies.get('access_token'),
+            'refresh_token': session_auth_cookies.get('refresh_token')
         }
         
         # Récupérer company_id
@@ -177,7 +91,7 @@ class TestAPIRoles:
         
         logger.info("Cleanup completed")
 
-    def test01_get_roles_list(self, api_tester, auth_token, setup_test_data):
+    def test01_get_roles_list(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester GET /roles - Liste tous les rôles"""
         company_id, resources = setup_test_data
         
@@ -196,7 +110,7 @@ class TestAPIRoles:
         
         logger.info(f"✅ Retrieved {len(result)} roles")
 
-    def test02_create_role(self, api_tester, auth_token, setup_test_data):
+    def test02_create_role(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester POST /roles - Créer un rôle"""
         company_id, resources = setup_test_data
         
@@ -231,7 +145,7 @@ class TestAPIRoles:
         
         logger.info(f"✅ Role created successfully with ID: {result['id']}")
 
-    def test03_get_role_by_id(self, api_tester, auth_token, setup_test_data):
+    def test03_get_role_by_id(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester GET /roles/{id} - Récupérer un rôle par ID"""
         company_id, resources = setup_test_data
         
@@ -269,7 +183,7 @@ class TestAPIRoles:
         
         logger.info(f"✅ Role retrieved: {result}")
 
-    def test04_patch_role(self, api_tester, auth_token, setup_test_data):
+    def test04_patch_role(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester PATCH /roles/{id} - Mise à jour partielle d'un rôle"""
         company_id, resources = setup_test_data
         
@@ -317,7 +231,7 @@ class TestAPIRoles:
         
         logger.info(f"✅ Role patched successfully")
 
-    def test05_put_role(self, api_tester, auth_token, setup_test_data):
+    def test05_put_role(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester PUT /roles/{id} - Remplacement complet d'un rôle"""
         company_id, resources = setup_test_data
         
@@ -367,7 +281,7 @@ class TestAPIRoles:
         
         logger.info(f"✅ Role updated successfully")
 
-    def test06_add_policy_to_role(self, api_tester, auth_token, setup_test_data):
+    def test06_add_policy_to_role(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester POST /roles/{id}/policies - Ajouter une policy à un rôle"""
         company_id, resources = setup_test_data
         
@@ -431,7 +345,7 @@ class TestAPIRoles:
         
         logger.info(f"✅ Policy added to role successfully")
 
-    def test07_get_role_policies(self, api_tester, auth_token, setup_test_data):
+    def test07_get_role_policies(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester GET /roles/{id}/policies - Récupérer les policies d'un rôle"""
         company_id, resources = setup_test_data
         
@@ -493,7 +407,7 @@ class TestAPIRoles:
         
         logger.info(f"✅ Retrieved {len(result)} policies for role")
 
-    def test08_delete_policy_from_role(self, api_tester, auth_token, setup_test_data):
+    def test08_delete_policy_from_role(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester DELETE /roles/{id}/policies/{policy_id} - Supprimer une policy d'un rôle"""
         company_id, resources = setup_test_data
         
@@ -551,7 +465,7 @@ class TestAPIRoles:
         
         # Ne pas ajouter à role_policies car déjà supprimé
 
-    def test09_delete_role(self, api_tester, auth_token, setup_test_data):
+    def test09_delete_role(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester DELETE /roles/{id} - Supprimer un rôle"""
         company_id, resources = setup_test_data
         

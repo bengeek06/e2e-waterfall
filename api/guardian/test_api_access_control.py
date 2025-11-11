@@ -15,101 +15,15 @@ from conftest import get_service_logger
 
 logger = get_service_logger('guardian')
 
-class APITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        # Ignorer les certificats auto-signés pour les tests
-        self.session.verify = False
-        self.auth_cookies = None
-    
-    @staticmethod
-    def log_request(method, url, data=None, cookies=None):
-        """Log une requête HTTP avec détails"""
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            # Masquer les mots de passe dans les logs
-            safe_data = data.copy() if isinstance(data, dict) else data
-            if isinstance(safe_data, dict) and 'password' in safe_data:
-                safe_data['password'] = '***'
-            logger.debug(f">>> Request body: {safe_data}")
-        if cookies:
-            # Logger les cookies utilisés (tronqués pour sécurité)
-            for key, value in cookies.items():
-                display_value = f"{value[:50]}..." if len(value) > 50 else value
-                logger.debug(f">>> Using {key}: {display_value}")
-    
-    @staticmethod
-    def log_response(response):
-        """Log une réponse HTTP avec détails"""
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        logger.debug(f"<<< Response headers: {dict(response.headers)}")
-        try:
-            if response.text:
-                logger.debug(f"<<< Response body: {response.json()}")
-        except:
-            logger.debug(f"<<< Response body (raw): {response.text}")
-        
-    def set_auth_cookies(self, cookies):
-        """Définir les cookies d'authentification"""
-        self.auth_cookies = cookies
-        # Forcer l'ajout des cookies à la session
-        for cookie in cookies:
-            self.session.cookies.set(cookie.name, cookie.value, domain=cookie.domain, path=cookie.path)
-        
-    def wait_for_api(self, endpoint: str, timeout: int = 10) -> bool:
-        """Attendre qu'une API soit disponible"""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                logger.debug(f"wait_for_api - Status: {response.status_code}, Response: {response.text[:100]}...")
-                if response.status_code == 200:
-                    return True
-                elif response.status_code in [401, 403]:
-                    logger.warning(f"Authentication issue detected: {response.status_code}")
-                    return False  # Ne pas continuer si c'est un problème d'auth
-            except requests.exceptions.RequestException as e:
-                logger.debug(f"Request exception: {e}")
-                pass
-            time.sleep(2)
-        return False
-
 class TestAPIAccessControl:
     @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return APITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Obtenir un token d'authentification"""
-        # Attendre que l'API auth soit prête
-        assert api_tester.wait_for_api("/api/auth/version"), "API Auth not ready"
-        
-        # Créer un utilisateur de test et s'authentifier
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        if response.status_code == 200:
-            # Retourner les cookies de réponse pour avoir accès aux deux tokens
-            return response.cookies
-        return None
-    
-    @pytest.fixture(scope="class")
-    def setup_test_data(self, api_tester, auth_token):
+    def setup_test_data(self, api_tester, session_auth_cookies):
         """Configurer les données de test (role, policy, permission)"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         cookies_dict = {
-            'access_token': auth_token.get('access_token'),
-            'refresh_token': auth_token.get('refresh_token')
+            'access_token': session_auth_cookies.get('access_token'),
+            'refresh_token': session_auth_cookies.get('refresh_token')
         }
         
         # Récupérer le user_id et company_id depuis le token
@@ -133,7 +47,7 @@ class TestAPIAccessControl:
             'cookies': cookies_dict
         }
 
-    def test01_check_access_with_valid_permission(self, api_tester, auth_token, setup_test_data):
+    def test01_check_access_with_valid_permission(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester le check-access avec une permission valide"""
         
         # Récupérer une permission existante
@@ -186,7 +100,7 @@ class TestAPIAccessControl:
         # La réponse ne contient plus les détails de la requête, seulement access_granted et reason
         logger.info(f"Access granted: {result['access_granted']}, Reason: {result['reason']}")
 
-    def test02_check_access_denied(self, api_tester, auth_token, setup_test_data):
+    def test02_check_access_denied(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester le check-access pour une permission non attribuée (accès refusé)"""
         
         # Construire une requête pour une ressource inexistante ou non autorisée
@@ -220,7 +134,7 @@ class TestAPIAccessControl:
         
         logger.info(f"✅ Access correctly denied: {result['reason']}")
 
-    def test03_check_access_invalid_operation(self, api_tester, auth_token, setup_test_data):
+    def test03_check_access_invalid_operation(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester le check-access avec une opération invalide"""
         
         check_access_data = {
@@ -252,7 +166,7 @@ class TestAPIAccessControl:
             result = response.json()
             logger.info(f"Access granted: {result.get('access_granted')}, Reason: {result.get('reason')}")
 
-    def test04_check_access_missing_fields(self, api_tester, auth_token, setup_test_data):
+    def test04_check_access_missing_fields(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester le check-access avec des champs manquants"""
         
         # Requête sans user_id
@@ -283,7 +197,7 @@ class TestAPIAccessControl:
         assert 'error' in result or 'message' in result or 'errors' in result
         logger.info(f"✅ Missing fields correctly rejected: {result}")
 
-    def test05_check_access_different_company(self, api_tester, auth_token, setup_test_data):
+    def test05_check_access_different_company(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester le check-access avec un company_id différent (isolation multi-tenant)"""
         
         fake_company_id = "00000000-0000-0000-0000-000000000000"
@@ -323,7 +237,7 @@ class TestAPIAccessControl:
             logger.warning(f"⚠️ Access granted despite different company_id - possible security issue")
             logger.warning(f"Reason: {result.get('reason')}")
 
-    def test06_check_access_all_operations(self, api_tester, auth_token, setup_test_data):
+    def test06_check_access_all_operations(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester le check-access pour toutes les opérations standard"""
         
         operations = ['list', 'create', 'read', 'update', 'delete']
