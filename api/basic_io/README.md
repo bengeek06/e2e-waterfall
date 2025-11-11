@@ -48,14 +48,14 @@ pytest api/basic_io/test_basic_io_import_fk.py -v
 
 **Note:** Ces tests valident que le service résout correctement les FK en utilisant les métadonnées `_references` présentes dans les données exportées.
 
-**⚠️ Limitations actuelles du service:**
+**✅ GitHub Issue #4 - FIXED:**
 
-1. **Mode `on_ambiguous=skip`**: Le service détecte l'ambiguïté mais **assigne quand même un des IDs candidats** au lieu de NULL
-2. **Mode `on_ambiguous=fail`**: **Non implémenté** - le service retourne 201 (succès) même en mode fail
-3. **Mode `on_missing=skip`**: Ne peut pas fonctionner car `position_id` est **requis** dans le schéma Identity (retourne 400)
-4. **Mode `on_missing=fail`**: Même comportement que skip (échec dans les deux cas)
+Les modes `on_ambiguous` et `on_missing` sont maintenant **correctement implémentés**:
 
-Voir le rapport de bug détaillé: `.spec/bug_report_basic_io_fk_modes_not_implemented.md`
+1. **Mode `on_ambiguous=skip`**: Le service détecte l'ambiguïté. Si le champ FK est **optionnel**, il sera mis à NULL. Si le champ est **requis** (comme `position_id` pour users), l'import échoue avec 400.
+2. **Mode `on_ambiguous=fail`**: ✅ **Implémenté** - le service retourne 400 avec un message d'erreur explicite quand une référence est ambiguë
+3. **Mode `on_missing=skip`**: Le service détecte les références manquantes. Si le champ FK est **optionnel**, il sera mis à NULL. Si le champ est **requis**, l'import échoue avec 400.
+4. **Mode `on_missing=fail`**: ✅ **Implémenté** - le service retourne 400 avec un message d'erreur explicite quand une référence est manquante
 
 ### 3. Intégration Export/Import (`test_basic_io_export_import.py`)
 

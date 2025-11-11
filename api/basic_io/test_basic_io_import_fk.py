@@ -240,7 +240,8 @@ class TestBasicIOImportFK:
             files = {'file': ('import_ambiguous.json', json_file, 'application/json')}
             data = {
                 'url': 'http://identity_service:5000/users',
-                'type': 'json'
+                'type': 'json',
+                'on_ambiguous': 'skip'  # Mode skip explicite
             }
             
             api_tester.log_request('POST', f"{api_tester.base_url}/api/basic-io/import", data)
@@ -252,9 +253,12 @@ class TestBasicIOImportFK:
             )
             api_tester.log_response(response)
             
-            # Vérification: En mode skip, l'import réussit
-            assert response.status_code in [201, 207], \
-                f"Expected 201 or 207 for skip mode, got {response.status_code}: {response.text}"
+            # ⚠️ COMPORTEMENT AVEC CHAMP REQUIS: 
+            # Même en mode skip, si position_id est REQUIS par le schéma Identity,
+            # l'import échoue car le service ne peut pas créer le user sans ce champ
+            # C'est le comportement correct - skip ne peut pas contourner les contraintes du schéma
+            assert response.status_code == 400, \
+                f"Expected 400 (position_id required by schema), got {response.status_code}: {response.text}"
             
             result = response.json()
             resolution_report = result.get('resolution_report', {})
@@ -263,31 +267,13 @@ class TestBasicIOImportFK:
             assert resolution_report.get('ambiguous', 0) >= 1, \
                 f"Expected at least 1 ambiguous reference, got {resolution_report}"
             
-            # ⚠️ COMPORTEMENT ACTUEL: Le service assigne un des IDs au lieu de NULL
-            # Voir bug report: .spec/bug_report_basic_io_fk_modes_not_implemented.md
+            # L'import échoue car position_id est requis par Identity (skip ne peut pas contourner ça)
             import_report = result.get('import_report', {})
-            assert import_report.get('success', 0) == 1, \
-                "Expected user to be imported in skip mode"
+            assert import_report.get('failed', 0) == 1, \
+                "Expected import to fail (position_id required by Identity schema)"
             
-            id_mapping = import_report.get('id_mapping', {})
-            created_user_id = id_mapping['temp-user-1']
-            created_user_ids.append(created_user_id)
-            
-            # Vérifier que le user a été créé avec un des position_id
-            user_response = api_tester.session.get(
-                f"{api_tester.base_url}/api/identity/users/{created_user_id}",
-                cookies=session_auth_cookies
-            )
-            assert user_response.status_code == 200
-            user_data = user_response.json()
-            position_value = user_data.get('position_id')
-            
-            # Le service assigne un des deux IDs ambigus (comportement actuel)
-            assert position_value in created_position_ids, \
-                f"Service assigned position_id {position_value}, expected one of {created_position_ids}"
-            logger.info(f"⚠️ Ambiguous ref: service assigned one of the candidates: {position_value}")
-            
-            logger.info(f"Resolution report (skip mode): {resolution_report}")
+            logger.info("✅ on_ambiguous=skip detected ambiguity but import fails: position_id required")
+            logger.info(f"Resolution report: {resolution_report}")
             
         finally:
             # Cleanup
@@ -384,30 +370,30 @@ class TestBasicIOImportFK:
             )
             api_tester.log_response(response)
             
-            # ⚠️ COMPORTEMENT ACTUEL: Le mode fail n'est PAS implémenté
-            # Le service retourne 201 (succès) même avec on_ambiguous=fail
-            # et assigne un des IDs candidats
-            assert response.status_code == 201, \
-                f"Service returns 201 even in fail mode (not implemented), got {response.status_code}"
+            # ✅ COMPORTEMENT CORRECT: Le mode fail EST implémenté
+            # Le service retourne 400 avec on_ambiguous=fail quand une référence est ambiguë
+            assert response.status_code == 400, \
+                f"Expected 400 when on_ambiguous=fail with ambiguous reference, got {response.status_code}"
             
             result = response.json()
-            resolution_report = result.get('resolution_report', {})
             
-            # La référence ambiguë est détectée
+            # Vérifier le message d'erreur
+            assert 'ambiguous' in result.get('message', '').lower(), \
+                "Expected error message about ambiguous references"
+            
+            # Vérifier le rapport de résolution
+            resolution_report = result.get('resolution_report', {})
             assert resolution_report.get('ambiguous', 0) >= 1, \
                 "Expected at least 1 ambiguous reference detected"
             
-            # Mais l'import réussit quand même
-            import_report = result.get('import_report', {})
-            assert import_report.get('success', 0) == 1, \
-                "Service imports successfully despite on_ambiguous=fail (mode not implemented)"
+            # Vérifier les détails de la référence ambiguë
+            details = resolution_report.get('details', [])
+            assert len(details) > 0, "Expected details about ambiguous reference"
+            assert details[0]['status'] == 'ambiguous', "Expected status=ambiguous"
+            assert details[0]['field'] == 'position_id', "Expected field=position_id"
+            assert details[0]['candidates'] == 2, "Expected 2 candidates found"
             
-            # Récupérer l'ID du user créé pour cleanup
-            id_mapping = import_report.get('id_mapping', {})
-            if 'temp-user-1' in id_mapping:
-                created_user_ids.append(id_mapping['temp-user-1'])
-            
-            logger.info(f"⚠️ on_ambiguous=fail NOT IMPLEMENTED - service returns 201: {resolution_report}")
+            logger.info(f"✅ on_ambiguous=fail WORKS CORRECTLY - service returns 400: {resolution_report}")
             
         finally:
             # Cleanup users first (FK dependency)
@@ -471,8 +457,8 @@ class TestBasicIOImportFK:
             files = {'file': ('import_missing.json', json_file, 'application/json')}
             data = {
                 'url': 'http://identity_service:5000/users',
-                'type': 'json'
-                # on_missing=skip par défaut
+                'type': 'json',
+                'on_missing': 'skip'  # Mode skip explicite
             }
             
             api_tester.log_request('POST', f"{api_tester.base_url}/api/basic-io/import", data)
@@ -566,22 +552,30 @@ class TestBasicIOImportFK:
             )
             api_tester.log_response(response)
             
-            # ⚠️ COMPORTEMENT ACTUEL: position_id est REQUIS dans Identity service
-            # Que ce soit mode skip ou fail, l'import échoue car schéma l'exige
+            # ✅ COMPORTEMENT CORRECT: Le mode fail EST implémenté
+            # Le service retourne 400 avec on_missing=fail quand une référence est manquante
             assert response.status_code == 400, \
-                f"Expected 400 (position_id required), got {response.status_code}"
+                f"Expected 400 when on_missing=fail with missing reference, got {response.status_code}"
             
             result = response.json()
+            
+            # Vérifier le message d'erreur
+            assert 'missing' in result.get('message', '').lower(), \
+                "Expected error message about missing references"
+            
+            # Vérifier le rapport de résolution
             resolution_report = result.get('resolution_report', {})
-            
             assert resolution_report.get('missing', 0) >= 1, \
-                "Expected at least 1 missing reference"
+                "Expected at least 1 missing reference detected"
             
-            import_report = result.get('import_report', {})
-            assert import_report.get('failed', 0) == 1, \
-                "Expected import to fail (position_id required by schema)"
+            # Vérifier les détails de la référence manquante
+            details = resolution_report.get('details', [])
+            assert len(details) > 0, "Expected details about missing reference"
+            assert details[0]['status'] == 'missing', "Expected status=missing"
+            assert details[0]['field'] == 'position_id', "Expected field=position_id"
             
-            logger.info("⚠️ on_missing=fail: import fails anyway (position_id required by Identity)")
+            logger.info("✅ on_missing=fail WORKS CORRECTLY - service returns 400")
+            logger.info(f"Resolution report (missing ref): {resolution_report}")
             
         finally:
             # Cleanup (aucun user créé car import échoue, mais par sécurité)
