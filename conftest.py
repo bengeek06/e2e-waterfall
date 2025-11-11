@@ -111,16 +111,16 @@ class APITester:
             time.sleep(2)
         return False
     
-    def login(self, email: str, password: str) -> str:
+    def login(self, email: str, password: str):
         """
-        Login and return access token
+        Login and return both access and refresh tokens
         
         Args:
             email: User email
             password: User password
             
         Returns:
-            access_token string or None if login failed
+            dict with 'access_token' and 'refresh_token' or None if login failed
         """
         login_data = {"email": email, "password": password}
         response = self.session.post(
@@ -128,7 +128,10 @@ class APITester:
             json=login_data
         )
         if response.status_code == 200:
-            return response.cookies.get('access_token')
+            return {
+                'access_token': response.cookies.get('access_token'),
+                'refresh_token': response.cookies.get('refresh_token')
+            }
         return None
 
 
@@ -202,20 +205,21 @@ def session_auth_token(api_tester, app_config):
     """
     Fixture session-level pour l'authentification
     Effectue le login une seule fois pour toute la session de tests
+    Retourne un dict avec access_token et refresh_token
     """
     logger.info("=" * 60)
     logger.info("Performing session-level authentication")
     logger.info("=" * 60)
     
     logger.info(f"Logging in as {app_config['login']}...")
-    access_token = api_tester.login(app_config['login'], app_config['password'])
+    tokens = api_tester.login(app_config['login'], app_config['password'])
     
-    if not access_token:
-        logger.error("Login failed - no access token received")
+    if not tokens:
+        logger.error("Login failed - no tokens received")
         return None
     
     logger.info("✅ Session authentication successful")
-    return access_token
+    return tokens
 
 
 @fixture(scope="session")
@@ -226,10 +230,8 @@ def session_auth_cookies(session_auth_token):
     """
     if not session_auth_token:
         return None
-    return {
-        'access_token': session_auth_token,
-        'refresh_token': session_auth_token  # Peut être différent selon l'implémentation
-    }
+    # session_auth_token est déjà un dict avec access_token et refresh_token
+    return session_auth_token
 
 
 @fixture(scope="session")
@@ -247,7 +249,7 @@ def session_user_info(api_tester, session_auth_token):
         verify_url = f"{api_tester.base_url}/api/auth/verify"
         response = api_tester.session.get(
             verify_url,
-            cookies={"access_token": session_auth_token}
+            cookies={"access_token": session_auth_token['access_token']}
         )
         
         if response.status_code != 200:
