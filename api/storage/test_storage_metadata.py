@@ -17,66 +17,16 @@ import io
 
 logger = logging.getLogger(__name__)
 
-
-class StorageAPITester:
-    """Helper class for Storage API testing"""
-    
-    def __init__(self, base_url):
-        self.base_url = base_url
-        self.session = requests.Session()
-    
-    def log_request(self, method, url, data=None):
-        """Log request details"""
-        print(f"\n>>> REQUEST: {method} {url}")
-        if data:
-            print(f">>> Request body: {data}")
-    
-    def log_response(self, response):
-        """Log response details"""
-        print(f"<<< RESPONSE: {response.status_code}")
-        print(f"<<< Response headers: {dict(response.headers)}")
-        if response.headers.get('content-type', '').startswith('application/json'):
-            try:
-                print(f"<<< Response body: {response.json()}")
-            except Exception:
-                pass
-
-
 class TestStorageMetadata:
     """Tests pour les métadonnées et listing de fichiers"""
     
+
+
     @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        """Create API tester instance"""
-        return StorageAPITester(app_config['web_url'])
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Get authentication token via login"""
-        login_url = f"{api_tester.base_url}/api/auth/login"
-        
-        credentials = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(login_url, json=credentials)
-        assert response.status_code == 200, f"Login failed: {response.text}"
-        
-        # Extract cookies
-        cookies = {
-            'access_token': response.cookies.get('access_token'),
-            'refresh_token': response.cookies.get('refresh_token')
-        }
-        
-        assert cookies['access_token'], "No access_token in response"
-        return cookies
-    
-    @pytest.fixture(scope="class")
-    def user_info(self, api_tester, auth_token):
+    def user_info(self, api_tester, session_auth_cookies, session_user_info):
         """Get current user info from JWT"""
         url = f"{api_tester.base_url}/api/auth/verify"
-        response = api_tester.session.get(url, cookies=auth_token)
+        response = api_tester.session.get(url, cookies=session_auth_cookies)
         
         assert response.status_code == 200, f"Failed to verify token: {response.text}"
         
@@ -91,7 +41,7 @@ class TestStorageMetadata:
         return user_info
     
     @pytest.fixture(scope="class")
-    def test_files(self, api_tester, auth_token, user_info):
+    def test_files(self, api_tester, session_auth_cookies, user_info):
         """Upload plusieurs fichiers de test pour les tests de listing et métadonnées"""
         user_id = user_info['user_id']
         upload_url = f"{api_tester.base_url}/api/storage/upload/proxy"
@@ -111,7 +61,7 @@ class TestStorageMetadata:
                 'logical_path': f'{user_id}/metadata_test/{filename}'
             }
             
-            response = api_tester.session.post(upload_url, files=files, data=data, cookies=auth_token)
+            response = api_tester.session.post(upload_url, files=files, data=data, cookies=session_auth_cookies)
             assert response.status_code == 201, f"Failed to upload {filename}: {response.text}"
             
             upload_response = response.json()
@@ -126,9 +76,9 @@ class TestStorageMetadata:
         
         return files_data
 
-    def test01_list_files_users_bucket(self, api_tester, auth_token, user_info, test_files):
+    def test01_list_files_users_bucket(self, api_tester, session_auth_cookies, user_info, test_files):
         """Tester le listing des fichiers dans le bucket users"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         
@@ -141,7 +91,7 @@ class TestStorageMetadata:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -170,9 +120,9 @@ class TestStorageMetadata:
         logger.info(f"✅ Listed {len(items)} files in bucket users")
         logger.info(f"Found {len(found_files)} test files")
 
-    def test02_list_files_with_pagination(self, api_tester, auth_token, user_info, test_files):
+    def test02_list_files_with_pagination(self, api_tester, session_auth_cookies, user_info, test_files):
         """Tester la pagination du listing"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         
@@ -187,7 +137,7 @@ class TestStorageMetadata:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -211,9 +161,9 @@ class TestStorageMetadata:
         logger.info(f"✅ Pagination works: {len(list_response['files'])} items on page {pagination['page']}")
         logger.info(f"Total files: {pagination['total_items']}")
 
-    def test03_list_files_empty_directory(self, api_tester, auth_token, user_info):
+    def test03_list_files_empty_directory(self, api_tester, session_auth_cookies, user_info):
         """Tester le listing d'un répertoire vide"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         
@@ -226,7 +176,7 @@ class TestStorageMetadata:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -241,9 +191,9 @@ class TestStorageMetadata:
         
         logger.info("✅ Empty directory returns empty list")
 
-    def test04_get_metadata_existing_file(self, api_tester, auth_token, user_info, test_files):
+    def test04_get_metadata_existing_file(self, api_tester, session_auth_cookies, user_info, test_files):
         """Tester la récupération des métadonnées d'un fichier"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         file_info = test_files[0]
@@ -257,7 +207,7 @@ class TestStorageMetadata:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -288,9 +238,9 @@ class TestStorageMetadata:
         logger.info(f"✅ Metadata retrieved for file {file_info['file_id']}")
         logger.info(f"Status: {file_data['status']}, Version: {version_data['version_number']}")
 
-    def test05_update_metadata_tags(self, api_tester, auth_token, user_info, test_files):
+    def test05_update_metadata_tags(self, api_tester, session_auth_cookies, user_info, test_files):
         """Tester la mise à jour des tags"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         file_info = test_files[1]
@@ -311,7 +261,7 @@ class TestStorageMetadata:
         }
         
         api_tester.log_request('PATCH', url, update_data)
-        response = api_tester.session.patch(url, params=params, json=update_data, cookies=auth_token)
+        response = api_tester.session.patch(url, params=params, json=update_data, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -330,7 +280,7 @@ class TestStorageMetadata:
             "logical_path": file_info['logical_path']
         }
         
-        response = api_tester.session.get(get_url, params=params, cookies=auth_token)
+        response = api_tester.session.get(get_url, params=params, cookies=session_auth_cookies)
         assert response.status_code == 200, "Failed to verify tags update"
         
         metadata_response = response.json()
@@ -344,9 +294,9 @@ class TestStorageMetadata:
         logger.info(f"✅ Tags updated successfully for file {file_info['file_id']}")
         logger.info(f"Tags: {file_data['tags']}")
 
-    def test06_update_metadata_description(self, api_tester, auth_token, user_info, test_files):
+    def test06_update_metadata_description(self, api_tester, session_auth_cookies, user_info, test_files):
         """Tester la mise à jour de la description via tags"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         file_info = test_files[2]
@@ -366,7 +316,7 @@ class TestStorageMetadata:
         }
         
         api_tester.log_request('PATCH', url, update_data)
-        response = api_tester.session.patch(url, params=params, json=update_data, cookies=auth_token)
+        response = api_tester.session.patch(url, params=params, json=update_data, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -385,7 +335,7 @@ class TestStorageMetadata:
             "logical_path": file_info['logical_path']
         }
         
-        response = api_tester.session.get(get_url, params=params, cookies=auth_token)
+        response = api_tester.session.get(get_url, params=params, cookies=session_auth_cookies)
         assert response.status_code == 200, "Failed to verify description update"
         
         metadata_response = response.json()

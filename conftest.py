@@ -1,6 +1,7 @@
 import os
 import logging
 import requests
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 from pytest import fixture
@@ -63,6 +64,74 @@ def get_service_logger(service_name: str) -> logging.Logger:
     
     return service_logger
 
+
+class APITester:
+    """
+    Classe générique pour tester les APIs
+    Utilisable pour tous les services (Identity, Guardian, Storage, Basic I/O, etc.)
+    """
+    def __init__(self, app_config):
+        self.session = requests.Session()
+        self.base_url = app_config['web_url']
+        self.session.verify = False
+        self.auth_cookies = None
+    
+    @staticmethod
+    def log_request(method: str, url: str, data=None, cookies=None):
+        """Log la requête envoyée"""
+        logger.debug(f">>> REQUEST: {method} {url}")
+        if data:
+            safe_data = data.copy() if isinstance(data, dict) else data
+            if isinstance(safe_data, dict) and 'password' in safe_data:
+                safe_data['password'] = '***'
+            logger.debug(f">>> Request body: {safe_data}")
+    
+    @staticmethod
+    def log_response(response: requests.Response):
+        """Log la réponse reçue"""
+        logger.debug(f"<<< RESPONSE: {response.status_code}")
+        try:
+            if response.text:
+                logger.debug(f"<<< Response body: {response.json()}")
+        except:
+            logger.debug(f"<<< Response body (raw): {response.text[:200]}")
+        
+    def wait_for_api(self, endpoint: str, timeout: int = 120) -> bool:
+        """Attendre qu'une API soit disponible"""
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
+                logger.debug(f"wait_for_api - Status: {response.status_code}")
+                if response.status_code == 200:
+                    return True
+            except requests.exceptions.RequestException as e:
+                logger.debug(f"Request exception: {e}")
+                pass
+            time.sleep(2)
+        return False
+    
+    def login(self, email: str, password: str) -> str:
+        """
+        Login and return access token
+        
+        Args:
+            email: User email
+            password: User password
+            
+        Returns:
+            access_token string or None if login failed
+        """
+        login_data = {"email": email, "password": password}
+        response = self.session.post(
+            f"{self.base_url}/api/auth/login",
+            json=login_data
+        )
+        if response.status_code == 200:
+            return response.cookies.get('access_token')
+        return None
+
+
 class TestSelectors:
     """Sélecteurs centralisés pour les tests E2E"""
     # Page d'initialisation
@@ -117,6 +186,81 @@ def app_config():
         'login': os.getenv('LOGIN'),
         'password': os.getenv('PASSWORD')
     }
+
+
+@fixture(scope="session")
+def api_tester(app_config):
+    """
+    Fixture session-level pour créer une instance d'APITester
+    Réutilisable par tous les tests
+    """
+    return APITester(app_config)
+
+
+@fixture(scope="session")
+def session_auth_token(api_tester, app_config):
+    """
+    Fixture session-level pour l'authentification
+    Effectue le login une seule fois pour toute la session de tests
+    """
+    logger.info("=" * 60)
+    logger.info("Performing session-level authentication")
+    logger.info("=" * 60)
+    
+    logger.info(f"Logging in as {app_config['login']}...")
+    access_token = api_tester.login(app_config['login'], app_config['password'])
+    
+    if not access_token:
+        logger.error("Login failed - no access token received")
+        return None
+    
+    logger.info("✅ Session authentication successful")
+    return access_token
+
+
+@fixture(scope="session")
+def session_auth_cookies(session_auth_token):
+    """
+    Fixture session-level pour les cookies d'authentification
+    Format dict compatible avec requests
+    """
+    if not session_auth_token:
+        return None
+    return {
+        'access_token': session_auth_token,
+        'refresh_token': session_auth_token  # Peut être différent selon l'implémentation
+    }
+
+
+@fixture(scope="session")
+def session_user_info(api_tester, session_auth_token):
+    """
+    Fixture session-level pour récupérer les informations de l'utilisateur authentifié
+    (company_id, user_id, organization_unit_id, etc.)
+    """
+    if not session_auth_token:
+        logger.error("No session auth token available")
+        return None
+    
+    try:
+        # Use /api/auth/verify endpoint with cookies
+        verify_url = f"{api_tester.base_url}/api/auth/verify"
+        response = api_tester.session.get(
+            verify_url,
+            cookies={"access_token": session_auth_token}
+        )
+        
+        if response.status_code != 200:
+            logger.error(f"Failed to verify auth: {response.status_code}")
+            return None
+        
+        user_info = response.json()
+        logger.info(f"✅ User info retrieved: company_id={user_info.get('company_id')}, user_id={user_info.get('id')}")
+        return user_info
+        
+    except Exception as e:
+        logger.error(f"Error getting user info: {e}")
+        return None
 
 
 def check_service_initialized(base_url: str, service: str) -> bool:

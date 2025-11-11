@@ -2,15 +2,11 @@
 Tests for Basic I/O API - Tree Structure Export functionality
 Tests pour l'export de structures arborescentes (parent_id, parent_uuid)
 """
-import requests
-import time
 import pytest
 import sys
+import time
+import requests
 from pathlib import Path
-import urllib3
-
-# Désactiver les warnings SSL pour les tests
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Ajouter le répertoire parent au path pour importer conftest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -19,86 +15,17 @@ from conftest import get_service_logger
 logger = get_service_logger('basic_io')
 
 
-class BasicIOAPITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        self.session.verify = False
-        
-    def wait_for_api(self, endpoint: str, timeout: int = 120) -> bool:
-        """Attendre qu'une API soit disponible"""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                if response.status_code == 200:
-                    return True
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(2)
-        return False
-    
-    def log_request(self, method: str, url: str, data: dict = None):
-        """Log la requête envoyée"""
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            logger.debug(f">>> Request params: {data}")
-    
-    def log_response(self, response: requests.Response):
-        """Log la réponse reçue"""
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        logger.debug(f"<<< Response headers: {dict(response.headers)}")
-        try:
-            if response.text and len(response.text) < 2000:
-                logger.debug(f"<<< Response body: {response.json()}")
-        except Exception:
-            logger.debug(f"<<< Response body (text): {response.text[:200]}")
-
-
 class TestBasicIOExportTree:
     """Tests d'export de structures arborescentes via Basic I/O API"""
     
-    @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return BasicIOAPITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Obtenir un token d'authentification"""
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        assert response.status_code == 200, f"Login failed: {response.text}"
-        
-        # Récupérer les cookies
-        access_token = response.cookies.get('access_token')
-        refresh_token = response.cookies.get('refresh_token')
-        
-        cookies = {
-            'access_token': access_token,
-            'refresh_token': refresh_token
-        }
-        
-        assert cookies['access_token'] or cookies['refresh_token'], \
-            "No auth cookies received"
-        
-        return cookies
-
-    def test01_export_json_tree_structure(self, api_tester, auth_token):
+    def test01_export_json_tree_structure(self, api_tester, session_auth_cookies):
         """Tester l'export JSON avec structure arborescente (tree=true)"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Récupérer company_id
         verify_response = api_tester.session.get(
             f"{api_tester.base_url}/api/auth/verify",
-            cookies=auth_token
+            cookies=session_auth_cookies
         )
         assert verify_response.status_code == 200
         company_id = verify_response.json()['company_id']
@@ -118,7 +45,7 @@ class TestBasicIOExportTree:
             root_response = api_tester.session.post(
                 f"{api_tester.base_url}/api/identity/organization_units",
                 json=root_data,
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             assert root_response.status_code == 201
             root_id = root_response.json()['id']
@@ -134,7 +61,7 @@ class TestBasicIOExportTree:
             child1_response = api_tester.session.post(
                 f"{api_tester.base_url}/api/identity/organization_units",
                 json=child1_data,
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             assert child1_response.status_code == 201
             child1_id = child1_response.json()['id']
@@ -150,7 +77,7 @@ class TestBasicIOExportTree:
             child2_response = api_tester.session.post(
                 f"{api_tester.base_url}/api/identity/organization_units",
                 json=child2_data,
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             assert child2_response.status_code == 201
             child2_id = child2_response.json()['id']
@@ -166,7 +93,7 @@ class TestBasicIOExportTree:
             grandchild_response = api_tester.session.post(
                 f"{api_tester.base_url}/api/identity/organization_units",
                 json=grandchild_data,
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             assert grandchild_response.status_code == 201
             grandchild_id = grandchild_response.json()['id']
@@ -186,7 +113,7 @@ class TestBasicIOExportTree:
             }
             
             api_tester.log_request('GET', url, params)
-            response = api_tester.session.get(url, params=params, cookies=auth_token)
+            response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
             api_tester.log_response(response)
             
             assert response.status_code == 200, \
@@ -230,7 +157,7 @@ class TestBasicIOExportTree:
                 try:
                     delete_response = api_tester.session.delete(
                         f"{api_tester.base_url}/api/identity/organization_units/{unit_id}",
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                     if delete_response.status_code == 204:
                         deleted_count += 1
@@ -239,9 +166,9 @@ class TestBasicIOExportTree:
             
             logger.info(f"✅ Cleanup completed: {deleted_count}/{len(created_unit_ids)} units deleted")
 
-    def test02_export_json_flat_with_parent_id(self, api_tester, auth_token):
+    def test02_export_json_flat_with_parent_id(self, api_tester, session_auth_cookies):
         """Tester l'export JSON flat même avec parent_id (tree=false)"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Export depuis organization_units (qui a parent_id), format flat
         target_url = "http://identity_service:5000/organization_units"
@@ -255,7 +182,7 @@ class TestBasicIOExportTree:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -288,9 +215,9 @@ class TestBasicIOExportTree:
             if not has_children:
                 logger.info("Confirmed: No nested children structure in flat export")
 
-    def test03_detect_tree_structure_parent_id(self, api_tester, auth_token):
+    def test03_detect_tree_structure_parent_id(self, api_tester, session_auth_cookies):
         """Tester la détection automatique de structure arborescente (parent_id)"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Export depuis organization_units (qui a parent_id)
         # Le service doit détecter automatiquement la structure
@@ -305,7 +232,7 @@ class TestBasicIOExportTree:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -338,9 +265,9 @@ class TestBasicIOExportTree:
             
             logger.info(f"Export successful: {len(data)} records")
 
-    def test04_detect_tree_structure_parent_uuid(self, api_tester, auth_token):
+    def test04_detect_tree_structure_parent_uuid(self, api_tester, session_auth_cookies):
         """Tester la détection automatique de structure avec parent_uuid"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Export depuis organization_units
         target_url = "http://identity_service:5000/organization_units"
@@ -353,7 +280,7 @@ class TestBasicIOExportTree:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -401,9 +328,9 @@ class TestBasicIOExportTree:
             
             logger.info(f"Export successful: {len(data)} records")
 
-    def test05_export_tree_with_enrichment(self, api_tester, auth_token):
+    def test05_export_tree_with_enrichment(self, api_tester, session_auth_cookies):
         """Tester l'export tree avec enrichissement des références"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Export tree avec enrich=true
         # Le parent_id devrait être enrichi avec les infos du parent
@@ -418,7 +345,7 @@ class TestBasicIOExportTree:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -457,9 +384,9 @@ class TestBasicIOExportTree:
             
             logger.info(f"Enriched tree export successful: {len(data)} root records")
 
-    def test06_export_csv_preserves_parent_id(self, api_tester, auth_token):
+    def test06_export_csv_preserves_parent_id(self, api_tester, session_auth_cookies):
         """Tester que l'export CSV préserve le champ parent_id (format flat obligatoire)"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Export CSV d'organization_units (qui a parent_id)
         # CSV est toujours flat, mais parent_id doit être une colonne
@@ -473,7 +400,7 @@ class TestBasicIOExportTree:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \

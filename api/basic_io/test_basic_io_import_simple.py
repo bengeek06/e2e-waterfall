@@ -7,13 +7,11 @@ import time
 import pytest
 import sys
 from pathlib import Path
-import urllib3
 import json
 import io
 import socket
 
 # Désactiver les warnings SSL pour les tests
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Ajouter le répertoire parent au path pour importer conftest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -21,110 +19,16 @@ from conftest import get_service_logger
 
 logger = get_service_logger('basic_io')
 
-
-class BasicIOAPITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        self.session.verify = False
-        
-    def wait_for_api(self, endpoint: str, timeout: int = 120) -> bool:
-        """Attendre qu'une API soit disponible"""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                if response.status_code == 200:
-                    return True
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(2)
-        return False
-    
-    def log_request(self, method: str, url: str, data: dict = None):
-        """Log la requête envoyée"""
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            logger.debug(f">>> Request data: {str(data)[:500]}")
-    
-    def log_response(self, response: requests.Response):
-        """Log la réponse reçue"""
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        logger.debug(f"<<< Response headers: {dict(response.headers)}")
-        try:
-            if response.text and len(response.text) < 2000:
-                logger.debug(f"<<< Response body: {response.json()}")
-        except Exception:
-            logger.debug(f"<<< Response body (text): {response.text[:200]}")
-
-    def find_organization_units_by_name(self, name: str, company_id: str, cookies: dict):
-        """Return list of organization unit IDs matching exact name and company_id
-
-        The identity service doesn't provide a dedicated search in tests, so
-        retrieve the list and filter client-side.
-        """
-        try:
-            resp = self.session.get(f"{self.base_url}/api/identity/organization_units", cookies=cookies)
-            if resp.status_code != 200:
-                logger.debug(f"Failed to list organization_units for cleanup: {resp.status_code}")
-                return []
-            data = resp.json()
-            matches = [r['id'] for r in data if r.get('name') == name and str(r.get('company_id')) == str(company_id)]
-            return matches
-        except Exception as e:
-            logger.warning(f"Exception when listing organization_units: {e}")
-            return []
-
-
 class TestBasicIOImportSimple:
     """Tests d'import simple via Basic I/O API"""
     
-    @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return BasicIOAPITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Obtenir un token d'authentification"""
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        assert response.status_code == 200, f"Login failed: {response.text}"
-        
-        # Récupérer les cookies
-        access_token = response.cookies.get('access_token')
-        refresh_token = response.cookies.get('refresh_token')
-        
-        cookies = {
-            'access_token': access_token,
-            'refresh_token': refresh_token
-        }
-        
-        assert cookies['access_token'] or cookies['refresh_token'], \
-            "No auth cookies received"
-        
-        return cookies
-    
-    @pytest.fixture(scope="class")
-    def company_id(self, api_tester, auth_token):
-        """Récupérer le company_id de l'utilisateur authentifié"""
-        verify_response = api_tester.session.get(
-            f"{api_tester.base_url}/api/auth/verify",
-            cookies=auth_token
-        )
-        assert verify_response.status_code == 200
-        return verify_response.json()['company_id']
 
-    def test01_import_json_simple_records(self, api_tester, auth_token, company_id):
+
+
+    def test01_import_json_simple_records(self, api_tester, session_auth_cookies, session_user_info):
         """Tester l'import JSON simple (création de nouveaux records)"""
-        assert auth_token, "Authentication failed"
+        company_id = session_user_info["company_id"]
+        assert session_auth_cookies, "Authentication failed"
         
         timestamp = int(time.time() * 1000)
         
@@ -168,7 +72,7 @@ class TestBasicIOImportSimple:
                 url,
                 files=files,
                 data=data,
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             api_tester.log_response(response)
 
@@ -208,10 +112,19 @@ class TestBasicIOImportSimple:
             # If API returned id_mapping use it; else fallback to searching by name
             ids_to_delete = list(created_ids)
             if not ids_to_delete:
-                for name in created_names:
-                    found = api_tester.find_organization_units_by_name(name, company_id, auth_token)
-                    if found:
-                        ids_to_delete.extend(found)
+                # Fallback: chercher par nom
+                try:
+                    resp = api_tester.session.get(
+                        f"{api_tester.base_url}/api/identity/organization_units", 
+                        cookies=session_auth_cookies
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        for name in created_names:
+                            matches = [r['id'] for r in data if r.get('name') == name and str(r.get('company_id')) == str(company_id)]
+                            ids_to_delete.extend(matches)
+                except Exception as e:
+                    logger.warning(f"Error finding units for cleanup: {e}")
 
             if ids_to_delete:
                 logger.info(f"🧹 Cleaning up {len(ids_to_delete)} imported units...")
@@ -219,14 +132,15 @@ class TestBasicIOImportSimple:
                     try:
                         api_tester.session.delete(
                             f"{api_tester.base_url}/api/identity/organization_units/{unit_id}",
-                            cookies=auth_token
+                            cookies=session_auth_cookies
                         )
                     except Exception as e:
                         logger.error(f"Error deleting unit {unit_id}: {e}")
 
-    def test02_import_csv_simple_records(self, api_tester, auth_token, company_id):
+    def test02_import_csv_simple_records(self, api_tester, session_auth_cookies, session_user_info):
         """Tester l'import CSV simple (devrait être supporté selon spec)"""
-        assert auth_token, "Authentication failed"
+        company_id = session_user_info["company_id"]
+        assert session_auth_cookies, "Authentication failed"
         
         timestamp = int(time.time() * 1000)
         
@@ -261,7 +175,7 @@ Imported_CSV_Unit_3_{timestamp},{company_id},Imported via CSV test 3"""
                 url,
                 files=files,
                 data=data,
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             api_tester.log_response(response)
 
@@ -293,10 +207,19 @@ Imported_CSV_Unit_3_{timestamp},{company_id},Imported via CSV test 3"""
             # If API returned id_mapping use it; else fallback to searching by name
             ids_to_delete = list(created_ids)
             if not ids_to_delete:
-                for name in created_names:
-                    found = api_tester.find_organization_units_by_name(name, company_id, auth_token)
-                    if found:
-                        ids_to_delete.extend(found)
+                # Fallback: chercher par nom
+                try:
+                    resp = api_tester.session.get(
+                        f"{api_tester.base_url}/api/identity/organization_units", 
+                        cookies=session_auth_cookies
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        for name in created_names:
+                            matches = [r['id'] for r in data if r.get('name') == name and str(r.get('company_id')) == str(company_id)]
+                            ids_to_delete.extend(matches)
+                except Exception as e:
+                    logger.warning(f"Error finding units for cleanup: {e}")
 
             if ids_to_delete:
                 logger.info(f"🧹 Cleaning up {len(ids_to_delete)} imported units...")
@@ -304,14 +227,14 @@ Imported_CSV_Unit_3_{timestamp},{company_id},Imported via CSV test 3"""
                     try:
                         api_tester.session.delete(
                             f"{api_tester.base_url}/api/identity/organization_units/{unit_id}",
-                            cookies=auth_token
+                            cookies=session_auth_cookies
                         )
                     except Exception as e:
                         logger.error(f"Error deleting unit {unit_id}: {e}")
 
-    def test03_import_json_empty_array(self, api_tester, auth_token):
+    def test03_import_json_empty_array(self, api_tester, session_auth_cookies):
         """Tester l'import d'un tableau JSON vide (devrait retourner 0 imported)"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Tableau vide
         import_data = []
@@ -335,7 +258,7 @@ Imported_CSV_Unit_3_{timestamp},{company_id},Imported via CSV test 3"""
             url,
             files=files,
             data=data,
-            cookies=auth_token
+            cookies=session_auth_cookies
         )
         api_tester.log_response(response)
         
@@ -355,9 +278,9 @@ Imported_CSV_Unit_3_{timestamp},{company_id},Imported via CSV test 3"""
         
         logger.info("✅ Empty array accepted with 201 and 0 imported records")
 
-    def test04_import_csv_malformed(self, api_tester, auth_token):
+    def test04_import_csv_malformed(self, api_tester, session_auth_cookies):
         """Tester l'import d'un CSV mal formé (devrait échouer avec erreur de parsing)"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # CSV mal formé: guillemets non fermés, colonnes incohérentes
         csv_data = """name,company_id,description
@@ -384,7 +307,7 @@ Missing,"columns"""
             url,
             files=files,
             data=data,
-            cookies=auth_token
+            cookies=session_auth_cookies
         )
         api_tester.log_response(response)
 
@@ -409,9 +332,9 @@ Missing,"columns"""
         else:
             logger.info("⚠️ Malformed CSV caused 500 error (service crash - needs better error handling)")
 
-    def test05_import_json_invalid_json(self, api_tester, auth_token):
+    def test05_import_json_invalid_json(self, api_tester, session_auth_cookies):
         """Tester l'import d'un JSON invalide (syntaxe incorrecte)"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # JSON invalide: virgule manquante, accolade non fermée
         invalid_json = """{
@@ -440,7 +363,7 @@ Missing,"columns"""
             url,
             files=files,
             data=data,
-            cookies=auth_token
+            cookies=session_auth_cookies
         )
         api_tester.log_response(response)
         
@@ -489,9 +412,10 @@ Missing,"columns"""
         
         logger.info("✅ Missing authentication correctly rejected with 401")
 
-    def test07_import_missing_required_fields(self, api_tester, auth_token, company_id):
+    def test07_import_missing_required_fields(self, api_tester, session_auth_cookies, session_user_info):
         """Tester l'import avec des champs requis manquants"""
-        assert auth_token, "Authentication failed"
+        company_id = session_user_info["company_id"]
+        assert session_auth_cookies, "Authentication failed"
         
         timestamp = int(time.time() * 1000)
         
@@ -532,7 +456,7 @@ Missing,"columns"""
                 url,
                 files=files,
                 data=data,
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             api_tester.log_response(response)
             
@@ -571,10 +495,19 @@ Missing,"columns"""
             # If API returned id_mapping use it; else fallback to searching by name
             ids_to_delete = list(created_ids)
             if not ids_to_delete:
-                for name in created_names:
-                    found = api_tester.find_organization_units_by_name(name, company_id, auth_token)
-                    if found:
-                        ids_to_delete.extend(found)
+                # Fallback: chercher par nom
+                try:
+                    resp = api_tester.session.get(
+                        f"{api_tester.base_url}/api/identity/organization_units", 
+                        cookies=session_auth_cookies
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        for name in created_names:
+                            matches = [r['id'] for r in data if r.get('name') == name and str(r.get('company_id')) == str(company_id)]
+                            ids_to_delete.extend(matches)
+                except Exception as e:
+                    logger.warning(f"Error finding units for cleanup: {e}")
 
             if ids_to_delete:
                 logger.info(f"🧹 Cleaning up {len(ids_to_delete)} imported units...")
@@ -582,7 +515,7 @@ Missing,"columns"""
                     try:
                         api_tester.session.delete(
                             f"{api_tester.base_url}/api/identity/organization_units/{unit_id}",
-                            cookies=auth_token
+                            cookies=session_auth_cookies
                         )
                         logger.info(f"Deleted unit: {unit_id}")
                     except Exception as e:

@@ -1,17 +1,13 @@
 """
 Tests for Basic I/O API - CSV Export functionality
 """
-import requests
-import time
 import pytest
 import sys
 from pathlib import Path
-import urllib3
 import csv
 import io
-
-# Désactiver les warnings SSL pour les tests
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+import time
+import requests
 
 # Ajouter le répertoire parent au path pour importer conftest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -20,78 +16,12 @@ from conftest import get_service_logger
 logger = get_service_logger('basic_io')
 
 
-class BasicIOAPITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        self.session.verify = False
-        
-    def wait_for_api(self, endpoint: str, timeout: int = 120) -> bool:
-        """Attendre qu'une API soit disponible"""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                if response.status_code == 200:
-                    return True
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(2)
-        return False
-    
-    def log_request(self, method: str, url: str, data: dict = None):
-        """Log la requête envoyée"""
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            logger.debug(f">>> Request params: {data}")
-    
-    def log_response(self, response: requests.Response):
-        """Log la réponse reçue"""
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        logger.debug(f"<<< Response headers: {dict(response.headers)}")
-        # Ne pas logger le contenu CSV (peut être très long)
-        logger.debug(f"<<< Response size: {len(response.content)} bytes")
-
-
 class TestBasicIOExportCSV:
     """Tests d'export CSV via Basic I/O API"""
-    
-    @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return BasicIOAPITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Obtenir un token d'authentification"""
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        assert response.status_code == 200, f"Login failed: {response.text}"
-        
-        # Récupérer les cookies
-        access_token = response.cookies.get('access_token')
-        refresh_token = response.cookies.get('refresh_token')
-        
-        cookies = {
-            'access_token': access_token,
-            'refresh_token': refresh_token
-        }
-        
-        assert cookies['access_token'] or cookies['refresh_token'], \
-            "No auth cookies received"
-        
-        return cookies
 
-    def test01_export_csv_simple(self, api_tester, auth_token):
+    def test01_export_csv_simple(self, api_tester, session_auth_cookies):
         """Tester l'export CSV basique depuis users endpoint"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Export CSV depuis l'endpoint users
         target_url = "http://identity_service:5000/users"
@@ -103,7 +33,7 @@ class TestBasicIOExportCSV:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -145,9 +75,9 @@ class TestBasicIOExportCSV:
         logger.info(f"✅ CSV export successful: {len(rows)} rows, {len(first_row.keys())} columns")
         logger.info(f"Columns: {', '.join(first_row.keys())}")
 
-    def test02_export_csv_with_special_chars(self, api_tester, auth_token):
+    def test02_export_csv_with_special_chars(self, api_tester, session_auth_cookies):
         """Tester l'export CSV avec caractères spéciaux"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Export depuis roles (peut contenir des descriptions avec caractères spéciaux)
         target_url = "http://guardian_service:5000/roles"
@@ -159,7 +89,7 @@ class TestBasicIOExportCSV:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -196,14 +126,14 @@ class TestBasicIOExportCSV:
         logger.info(f"✅ CSV export with special chars successful: {len(rows)} rows")
         logger.info(f"Sample row: {rows[0]}")
 
-    def test03_export_csv_large_dataset(self, api_tester, auth_token):
+    def test03_export_csv_large_dataset(self, api_tester, session_auth_cookies):
         """Tester l'export CSV d'un grand dataset (100+ users)"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Récupérer company_id depuis le token
         verify_response = api_tester.session.get(
             f"{api_tester.base_url}/api/auth/verify",
-            cookies=auth_token
+            cookies=session_auth_cookies
         )
         assert verify_response.status_code == 200, "Failed to verify token"
         company_id = verify_response.json()['company_id']
@@ -225,7 +155,7 @@ class TestBasicIOExportCSV:
                 response = api_tester.session.post(
                     f"{api_tester.base_url}/api/identity/users",
                     json=user_data,
-                    cookies=auth_token
+                    cookies=session_auth_cookies
                 )
                 
                 if response.status_code == 201:
@@ -251,7 +181,7 @@ class TestBasicIOExportCSV:
             
             # Mesurer le temps d'export
             start_time = time.time()
-            response = api_tester.session.get(url, params=params, cookies=auth_token)
+            response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
             duration = time.time() - start_time
             
             api_tester.log_response(response)
@@ -304,7 +234,7 @@ class TestBasicIOExportCSV:
                 try:
                     delete_response = api_tester.session.delete(
                         f"{api_tester.base_url}/api/identity/users/{user_id}",
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                     if delete_response.status_code == 204:
                         deleted_count += 1
@@ -315,9 +245,9 @@ class TestBasicIOExportCSV:
             
             logger.info(f"✅ Cleanup completed: {deleted_count}/{len(created_user_ids)} users deleted")
 
-    def test04_export_csv_empty_result(self, api_tester, auth_token):
+    def test04_export_csv_empty_result(self, api_tester, session_auth_cookies):
         """Tester l'export CSV quand l'endpoint retourne un tableau vide"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Utiliser un endpoint qui pourrait retourner un résultat vide
         # Note: Ceci peut varier selon l'état de la base de données
@@ -331,7 +261,7 @@ class TestBasicIOExportCSV:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \

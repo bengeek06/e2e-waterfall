@@ -7,10 +7,8 @@ import time
 import pytest
 import sys
 from pathlib import Path
-import urllib3
 
 # Désactiver les warnings SSL pour les tests
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Ajouter le répertoire parent au path pour importer conftest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -18,87 +16,13 @@ from conftest import get_service_logger
 
 logger = get_service_logger('basic_io')
 
-
-class BasicIOAPITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        self.session.verify = False
-        
-    def wait_for_api(self, endpoint: str, timeout: int = 120) -> bool:
-        """Attendre qu'une API soit disponible"""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                if response.status_code == 200:
-                    return True
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(2)
-        return False
-    
-    def log_request(self, method: str, url: str, data: dict = None):
-        """Log la requête envoyée"""
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            logger.debug(f">>> Request params: {data}")
-    
-    def log_response(self, response: requests.Response):
-        """Log la réponse reçue"""
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        logger.debug(f"<<< Response headers: {dict(response.headers)}")
-        # Logger le contenu Mermaid (c'est du texte)
-        if response.text and len(response.text) < 5000:
-            logger.debug(f"<<< Mermaid content:\n{response.text}")
-
-
 class TestBasicIOExportMermaid:
     """Tests d'export Mermaid via Basic I/O API"""
-    
+
     @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return BasicIOAPITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Obtenir un token d'authentification"""
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        assert response.status_code == 200, f"Login failed: {response.text}"
-        
-        # Récupérer les cookies
-        access_token = response.cookies.get('access_token')
-        refresh_token = response.cookies.get('refresh_token')
-        
-        cookies = {
-            'access_token': access_token,
-            'refresh_token': refresh_token
-        }
-        
-        assert cookies['access_token'] or cookies['refresh_token'], \
-            "No auth cookies received"
-        
-        return cookies
-    
-    @pytest.fixture(scope="class")
-    def tree_structure(self, api_tester, auth_token):
+    def tree_structure(self, api_tester, session_auth_cookies, session_user_info):
         """Créer une structure arborescente pour les tests Mermaid"""
-        # Récupérer company_id
-        verify_response = api_tester.session.get(
-            f"{api_tester.base_url}/api/auth/verify",
-            cookies=auth_token
-        )
-        assert verify_response.status_code == 200
-        company_id = verify_response.json()['company_id']
+        company_id = session_user_info['company_id']
         
         created_unit_ids = []
         timestamp = int(time.time() * 1000)
@@ -113,7 +37,7 @@ class TestBasicIOExportMermaid:
         root_response = api_tester.session.post(
             f"{api_tester.base_url}/api/identity/organization_units",
             json=root_data,
-            cookies=auth_token
+            cookies=session_auth_cookies
         )
         assert root_response.status_code == 201
         root_id = root_response.json()['id']
@@ -130,7 +54,7 @@ class TestBasicIOExportMermaid:
             child_response = api_tester.session.post(
                 f"{api_tester.base_url}/api/identity/organization_units",
                 json=child_data,
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             assert child_response.status_code == 201
             created_unit_ids.append(child_response.json()['id'])
@@ -145,15 +69,15 @@ class TestBasicIOExportMermaid:
             try:
                 api_tester.session.delete(
                     f"{api_tester.base_url}/api/identity/organization_units/{unit_id}",
-                    cookies=auth_token
+                    cookies=session_auth_cookies
                 )
             except Exception as e:
                 logger.error(f"Error deleting unit {unit_id}: {e}")
         logger.info("✅ Cleanup completed")
 
-    def test01_export_mermaid_flowchart(self, api_tester, auth_token, tree_structure):
+    def test01_export_mermaid_flowchart(self, api_tester, session_auth_cookies, tree_structure):
         """Tester l'export Mermaid au format flowchart"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         assert tree_structure, "Tree structure not created"
         
         # Export en format Mermaid flowchart
@@ -167,7 +91,7 @@ class TestBasicIOExportMermaid:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -209,9 +133,9 @@ class TestBasicIOExportMermaid:
         lines = mermaid_content.split('\n')[:10]
         logger.info(f"First lines:\n{chr(10).join(lines)}")
 
-    def test02_export_mermaid_graph(self, api_tester, auth_token, tree_structure):
+    def test02_export_mermaid_graph(self, api_tester, session_auth_cookies, tree_structure):
         """Tester l'export Mermaid au format graph"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         assert tree_structure, "Tree structure not created"
         
         # Export en format Mermaid graph
@@ -225,7 +149,7 @@ class TestBasicIOExportMermaid:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -252,9 +176,9 @@ class TestBasicIOExportMermaid:
         logger.info("✅ Mermaid graph export successful")
         logger.info(f"Content length: {len(mermaid_content)} characters")
 
-    def test03_export_mermaid_mindmap(self, api_tester, auth_token, tree_structure):
+    def test03_export_mermaid_mindmap(self, api_tester, session_auth_cookies, tree_structure):
         """Tester l'export Mermaid au format mindmap"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         assert tree_structure, "Tree structure not created"
         
         # Export en format Mermaid mindmap
@@ -268,7 +192,7 @@ class TestBasicIOExportMermaid:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -296,9 +220,9 @@ class TestBasicIOExportMermaid:
         logger.info(f"Content length: {len(mermaid_content)} characters")
         logger.info(f"Has indentation: {has_indentation}")
 
-    def test04_export_mermaid_with_metadata(self, api_tester, auth_token, tree_structure):
+    def test04_export_mermaid_with_metadata(self, api_tester, session_auth_cookies, tree_structure):
         """Tester l'export Mermaid avec métadonnées dans les commentaires"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         assert tree_structure, "Tree structure not created"
         
         # Export Mermaid (devrait inclure des métadonnées dans les commentaires)
@@ -312,7 +236,7 @@ class TestBasicIOExportMermaid:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -345,9 +269,9 @@ class TestBasicIOExportMermaid:
         
         logger.info("✅ Mermaid with metadata export successful")
 
-    def test05_export_mermaid_default_type(self, api_tester, auth_token):
+    def test05_export_mermaid_default_type(self, api_tester, session_auth_cookies):
         """Tester l'export Mermaid sans spécifier diagram_type (devrait utiliser flowchart par défaut)"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Export Mermaid sans diagram_type
         target_url = "http://identity_service:5000/organization_units"
@@ -360,7 +284,7 @@ class TestBasicIOExportMermaid:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \

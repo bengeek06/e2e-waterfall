@@ -19,100 +19,24 @@ from conftest import get_service_logger
 
 logger = get_service_logger('storage')
 
-
-class StorageAPITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        self.session.verify = False
-        
-    def wait_for_api(self, endpoint: str, timeout: int = 120) -> bool:
-        """Attendre qu'une API soit disponible"""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                if response.status_code == 200:
-                    return True
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(2)
-        return False
-    
-    def log_request(self, method: str, url: str, data: dict = None):
-        """Log la requête envoyée"""
-        print(f"\n>>> REQUEST: {method} {url}")
-        if data:
-            print(f">>> Request body: {data}")
-    
-    def log_response(self, response: requests.Response):
-        """Log la réponse reçue"""
-        print(f"<<< RESPONSE: {response.status_code}")
-        print(f"<<< Response headers: {dict(response.headers)}")
-        try:
-            if response.text and response.headers.get('content-type', '').startswith('application/json'):
-                print(f"<<< Response body: {response.json()}")
-        except Exception:
-            print(f"<<< Response body (raw): {response.text[:200]}")
-
-
-@pytest.mark.order(400)
 class TestStorageDelete:
     """Tests de suppression de fichiers"""
     
+
+
     @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return StorageAPITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Obtenir un token d'authentification"""
-        assert api_tester.wait_for_api("/api/auth/version"), "API Auth not ready"
-        
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        if response.status_code == 200:
-            access_token = response.cookies.get('access_token')
-            refresh_token = response.cookies.get('refresh_token')
-            return {
-                'access_token': access_token,
-                'refresh_token': refresh_token
-            }
-        return None
-    
-    @pytest.fixture(scope="class")
-    def user_info(self, api_tester, auth_token):
+    def user_info(self, api_tester, session_auth_cookies, session_user_info):
         """Récupérer les informations de l'utilisateur connecté"""
-        assert auth_token is not None, "No auth cookies available"
-        
-        response = api_tester.session.get(
-            f"{api_tester.base_url}/api/auth/verify",
-            cookies=auth_token
-        )
-        
-        assert response.status_code == 200, f"Failed to verify token: {response.text}"
-        
-        user_data = response.json()
-        logger.info(f"Connected user: {user_data.get('email')} (ID: {user_data.get('user_id')})")
-        
         return {
-            'user_id': user_data.get('user_id'),
-            'company_id': user_data.get('company_id'),
-            'email': user_data.get('email')
+            "user_id": session_user_info.get("user_id") or session_user_info.get("id"),
+            "company_id": session_user_info["company_id"],
+            "email": session_user_info.get("email")
         }
     
     @pytest.fixture(scope='class')
-    def test_files(self, api_tester, auth_token, user_info):
+    def test_files(self, api_tester, session_auth_cookies, user_info):
         """Créer des fichiers de test pour la suppression"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         files = []
@@ -133,7 +57,7 @@ class TestStorageDelete:
                 'logical_path': logical_path
             }
             
-            response = api_tester.session.post(url, files=files_payload, data=data, cookies=auth_token)
+            response = api_tester.session.post(url, files=files_payload, data=data, cookies=session_auth_cookies)
             assert response.status_code == 201, f"Failed to upload {filename}: {response.text}"
             
             upload_response = response.json()
@@ -149,9 +73,9 @@ class TestStorageDelete:
         
         return files
 
-    def test01_delete_logical_archive(self, api_tester, auth_token, user_info, test_files):
+    def test01_delete_logical_archive(self, api_tester, session_auth_cookies, user_info, test_files):
         """Tester la suppression logique (archivage)"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         file_info = test_files[0]
@@ -163,7 +87,7 @@ class TestStorageDelete:
         }
         
         api_tester.log_request('DELETE', url, delete_data)
-        response = api_tester.session.delete(url, json=delete_data, cookies=auth_token)
+        response = api_tester.session.delete(url, json=delete_data, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -182,7 +106,7 @@ class TestStorageDelete:
             "logical_path": file_info['logical_path']
         }
         
-        response = api_tester.session.get(metadata_url, params=metadata_params, cookies=auth_token)
+        response = api_tester.session.get(metadata_url, params=metadata_params, cookies=session_auth_cookies)
         
         # Le fichier devrait soit retourner 404, soit avoir is_deleted=True
         if response.status_code == 200:
@@ -196,9 +120,9 @@ class TestStorageDelete:
         
         logger.info(f"✅ Logical deletion successful for file {file_info['file_id']}")
 
-    def test02_delete_physical_permanent(self, api_tester, auth_token, user_info, test_files):
+    def test02_delete_physical_permanent(self, api_tester, session_auth_cookies, user_info, test_files):
         """Tester la suppression physique permanente"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         file_info = test_files[1]
@@ -211,7 +135,7 @@ class TestStorageDelete:
         }
         
         api_tester.log_request('DELETE', url, delete_data)
-        response = api_tester.session.delete(url, json=delete_data, cookies=auth_token)
+        response = api_tester.session.delete(url, json=delete_data, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -231,7 +155,7 @@ class TestStorageDelete:
             "logical_path": file_info['logical_path']
         }
         
-        response = api_tester.session.get(metadata_url, params=metadata_params, cookies=auth_token)
+        response = api_tester.session.get(metadata_url, params=metadata_params, cookies=session_auth_cookies)
         assert response.status_code == 404, \
             f"BUG: Metadata still exists after physical deletion (got {response.status_code}). " \
             f"This creates MinIO/Database inconsistency - the object is deleted in MinIO but metadata remains in DB. " \
@@ -239,9 +163,9 @@ class TestStorageDelete:
         
         logger.info(f"✅ Physical deletion successful - both object and metadata deleted for {file_info['file_id']}")
 
-    def test03_delete_missing_file(self, api_tester, auth_token):
+    def test03_delete_missing_file(self, api_tester, session_auth_cookies):
         """Tester la suppression d'un fichier qui n'existe pas"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
                 # Tenter de supprimer un fichier inexistant
         url = f"{api_tester.base_url}/api/storage/delete"
@@ -250,7 +174,7 @@ class TestStorageDelete:
         }
         
         api_tester.log_request('DELETE', url, delete_data)
-        response = api_tester.session.delete(url, json=delete_data, cookies=auth_token)
+        response = api_tester.session.delete(url, json=delete_data, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         # Devrait retourner 404
@@ -259,9 +183,9 @@ class TestStorageDelete:
         
         logger.info("✅ Deletion of missing file correctly returns 404")
 
-    def test04_delete_without_permission(self, api_tester, auth_token):
+    def test04_delete_without_permission(self, api_tester, session_auth_cookies):
         """Tester la suppression d'un fichier inexistant (simule accès non autorisé)"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         # Tenter de supprimer avec un mauvais file_id
         url = f"{api_tester.base_url}/api/storage/delete"
@@ -270,12 +194,12 @@ class TestStorageDelete:
         }
         
         api_tester.log_request('DELETE', url, delete_data)
-        response = api_tester.session.delete(url, json=delete_data, cookies=auth_token)
+        response = api_tester.session.delete(url, json=delete_data, cookies=session_auth_cookies)
         api_tester.log_response(response)
 
-    def test05_verify_remaining_file(self, api_tester, auth_token, user_info, test_files):
+    def test05_verify_remaining_file(self, api_tester, session_auth_cookies, user_info, test_files):
         """Vérifier que le dernier fichier existe toujours"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         file_info = test_files[2]
@@ -289,7 +213,7 @@ class TestStorageDelete:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \

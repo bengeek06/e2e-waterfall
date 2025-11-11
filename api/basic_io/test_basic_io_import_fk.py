@@ -9,10 +9,6 @@ import sys
 import io
 import json
 from pathlib import Path
-import urllib3
-
-# Désactiver les warnings SSL pour les tests
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Ajouter le répertoire parent au path pour importer conftest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -21,94 +17,17 @@ from conftest import get_service_logger
 logger = get_service_logger('basic_io')
 
 
-class BasicIOAPITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        self.session.verify = False
-        
-    def wait_for_api(self, endpoint: str, timeout: int = 120) -> bool:
-        """Attendre qu'une API soit disponible"""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                if response.status_code == 200:
-                    return True
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(2)
-        return False
-    
-    def log_request(self, method: str, url: str, data: dict = None):
-        """Log la requête envoyée"""
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            logger.debug(f">>> Request data: {data}")
-    
-    def log_response(self, response: requests.Response):
-        """Log la réponse reçue"""
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        logger.debug(f"<<< Response headers: {dict(response.headers)}")
-        try:
-            if response.text and len(response.text) < 2000:
-                logger.debug(f"<<< Response body: {response.json()}")
-        except Exception:
-            logger.debug(f"<<< Response body (text): {response.text[:200]}")
-
-
 class TestBasicIOImportFK:
     """Tests de résolution automatique des FK lors de l'import"""
-    
-    @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return BasicIOAPITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Obtenir un token d'authentification"""
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        assert response.status_code == 200, f"Login failed: {response.text}"
-        
-        # Récupérer les cookies
-        access_token = response.cookies.get('access_token')
-        refresh_token = response.cookies.get('refresh_token')
-        
-        cookies = {
-            'access_token': access_token,
-            'refresh_token': refresh_token
-        }
-        
-        assert cookies['access_token'] or cookies['refresh_token'], \
-            "No auth cookies received"
-        
-        return cookies
-    
-    @pytest.fixture(scope="class")
-    def company_id(self, api_tester, auth_token):
-        """Récupérer le company_id de l'utilisateur authentifié"""
-        response = api_tester.session.get(
-            f"{api_tester.base_url}/api/auth/verify",
-            cookies=auth_token
-        )
-        assert response.status_code == 200, f"Failed to verify auth: {response.text}"
-        return response.json()['company_id']
 
-    def test01_import_auto_resolve_single_match(self, api_tester, auth_token, company_id):
+    def test01_import_auto_resolve_single_match(self, api_tester, session_auth_cookies, session_user_info):
         """Tester la résolution automatique d'une référence FK avec une seule correspondance
         
         Scénario: user avec FK position_id → position (lookup par title)
         """
-        assert auth_token, "Authentication failed"
+        company_id = session_user_info["company_id"]
+        company_id = session_user_info['company_id']
+        assert session_auth_cookies, "Authentication failed"
         
         timestamp = int(time.time())
         created_position_ids = []
@@ -123,7 +42,7 @@ class TestBasicIOImportFK:
             # Récupérer l'org unit existante (Default Organization créée à l'init)
             org_units_response = api_tester.session.get(
                 f"{api_tester.base_url}/api/identity/organization_units",
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             assert org_units_response.status_code == 200, "Failed to list org units"
             org_units = org_units_response.json()
@@ -138,7 +57,7 @@ class TestBasicIOImportFK:
                     "company_id": company_id,  # Temporaire: schema valide ça mais le service l'écrase avec org_unit.company_id
                     "description": "Reference position for FK resolution test"
                 },
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             assert position_response.status_code == 201, \
                 f"Failed to create position: {position_response.text}"
@@ -183,7 +102,7 @@ class TestBasicIOImportFK:
                 f"{api_tester.base_url}/api/basic-io/import",
                 files=files,
                 data=data,
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             api_tester.log_response(response)
             
@@ -218,7 +137,7 @@ class TestBasicIOImportFK:
             # Vérifier que le user a bien la bonne position_id (UUID résolu)
             user_response = api_tester.session.get(
                 f"{api_tester.base_url}/api/identity/users/{created_user_id}",
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             assert user_response.status_code == 200, "Failed to retrieve created user"
             
@@ -235,7 +154,7 @@ class TestBasicIOImportFK:
                 try:
                     api_tester.session.delete(
                         f"{api_tester.base_url}/api/identity/users/{user_id}",
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                     logger.info(f"Cleaned up user: {user_id}")
                 except Exception as e:
@@ -246,18 +165,19 @@ class TestBasicIOImportFK:
                 try:
                     api_tester.session.delete(
                         f"{api_tester.base_url}/api/identity/positions/{position_id}",
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                     logger.info(f"Cleaned up position: {position_id}")
                 except Exception as e:
                     logger.warning(f"Failed to cleanup position {position_id}: {e}")
 
-    def test02_import_ambiguous_reference_skip(self, api_tester, auth_token, company_id):
+    def test02_import_ambiguous_reference_skip(self, api_tester, session_auth_cookies, session_user_info):
         """Tester le comportement skip quand une référence FK est ambiguë (plusieurs matches)
         
         Scénario: 2 positions avec le même title → user import avec FK ambiguë → skip
         """
-        assert auth_token, "Authentication failed"
+        company_id = session_user_info["company_id"]
+        assert session_auth_cookies, "Authentication failed"
         
         timestamp = int(time.time())
         created_position_ids = []
@@ -267,7 +187,7 @@ class TestBasicIOImportFK:
             # Récupérer l'org unit existante
             org_units_response = api_tester.session.get(
                 f"{api_tester.base_url}/api/identity/organization_units",
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             org_units = org_units_response.json()
             org_unit_id = org_units[0]['id']
@@ -286,7 +206,7 @@ class TestBasicIOImportFK:
                         "company_id": company_id,
                         "description": f"Duplicate position #{i+1}"
                     },
-                    cookies=auth_token
+                    cookies=session_auth_cookies
                 )
                 assert position_response.status_code == 201, \
                     f"Failed to create position #{i+1}: {position_response.text}"
@@ -328,7 +248,7 @@ class TestBasicIOImportFK:
                 f"{api_tester.base_url}/api/basic-io/import",
                 files=files,
                 data=data,
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             api_tester.log_response(response)
             
@@ -356,7 +276,7 @@ class TestBasicIOImportFK:
             # Vérifier que le user a été créé avec un des position_id
             user_response = api_tester.session.get(
                 f"{api_tester.base_url}/api/identity/users/{created_user_id}",
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             assert user_response.status_code == 200
             user_data = user_response.json()
@@ -375,7 +295,7 @@ class TestBasicIOImportFK:
                 try:
                     api_tester.session.delete(
                         f"{api_tester.base_url}/api/identity/users/{user_id}",
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                 except Exception as e:
                     logger.warning(f"Failed to cleanup user {user_id}: {e}")
@@ -384,17 +304,18 @@ class TestBasicIOImportFK:
                 try:
                     api_tester.session.delete(
                         f"{api_tester.base_url}/api/identity/positions/{position_id}",
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                 except Exception as e:
                     logger.warning(f"Failed to cleanup position {position_id}: {e}")
 
-    def test03_import_ambiguous_reference_fail(self, api_tester, auth_token, company_id):
+    def test03_import_ambiguous_reference_fail(self, api_tester, session_auth_cookies, session_user_info):
         """Tester le mode fail quand une référence FK est ambiguë
         
         Scénario: 2 positions avec même title + mode on_ambiguous=fail → import doit échouer
         """
-        assert auth_token, "Authentication failed"
+        company_id = session_user_info["company_id"]
+        assert session_auth_cookies, "Authentication failed"
         
         timestamp = int(time.time())
         created_position_ids = []
@@ -404,7 +325,7 @@ class TestBasicIOImportFK:
             # Récupérer l'org unit existante
             org_units_response = api_tester.session.get(
                 f"{api_tester.base_url}/api/identity/organization_units",
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             org_units = org_units_response.json()
             org_unit_id = org_units[0]['id']
@@ -423,7 +344,7 @@ class TestBasicIOImportFK:
                         "company_id": company_id,
                         "description": f"Duplicate position #{i+1}"
                     },
-                    cookies=auth_token
+                    cookies=session_auth_cookies
                 )
                 assert position_response.status_code == 201
                 created_position_ids.append(position_response.json()['id'])
@@ -459,7 +380,7 @@ class TestBasicIOImportFK:
                 f"{api_tester.base_url}/api/basic-io/import",
                 files=files,
                 data=data,
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             api_tester.log_response(response)
             
@@ -494,7 +415,7 @@ class TestBasicIOImportFK:
                 try:
                     api_tester.session.delete(
                         f"{api_tester.base_url}/api/identity/users/{user_id}",
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                     logger.info(f"Cleaned up user: {user_id}")
                 except Exception as e:
@@ -505,17 +426,18 @@ class TestBasicIOImportFK:
                 try:
                     api_tester.session.delete(
                         f"{api_tester.base_url}/api/identity/positions/{position_id}",
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                 except Exception as e:
                     logger.warning(f"Failed to cleanup: {e}")
 
-    def test04_import_missing_reference_skip(self, api_tester, auth_token, company_id):
+    def test04_import_missing_reference_skip(self, api_tester, session_auth_cookies, session_user_info):
         """Tester le mode skip quand une référence FK est introuvable
         
         Scénario: user avec FK vers position inexistante → skip mode → user créé sans position_id
         """
-        assert auth_token, "Authentication failed"
+        company_id = session_user_info["company_id"]
+        assert session_auth_cookies, "Authentication failed"
         
         timestamp = int(time.time())
         created_user_ids = []
@@ -558,7 +480,7 @@ class TestBasicIOImportFK:
                 f"{api_tester.base_url}/api/basic-io/import",
                 files=files,
                 data=data,
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             api_tester.log_response(response)
             
@@ -589,18 +511,19 @@ class TestBasicIOImportFK:
                 try:
                     api_tester.session.delete(
                         f"{api_tester.base_url}/api/identity/users/{user_id}",
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                     logger.info(f"Cleaned up user: {user_id}")
                 except Exception as e:
                     logger.warning(f"Failed to cleanup: {e}")
 
-    def test05_import_missing_reference_fail(self, api_tester, auth_token, company_id):
+    def test05_import_missing_reference_fail(self, api_tester, session_auth_cookies, session_user_info):
         """Tester le mode fail quand une référence FK est introuvable
         
         Scénario: user avec FK vers position inexistante + mode on_missing=fail → import doit échouer
         """
-        assert auth_token, "Authentication failed"
+        company_id = session_user_info["company_id"]
+        assert session_auth_cookies, "Authentication failed"
         
         timestamp = int(time.time())
         created_user_ids = []
@@ -639,7 +562,7 @@ class TestBasicIOImportFK:
                 f"{api_tester.base_url}/api/basic-io/import",
                 files=files,
                 data=data,
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             api_tester.log_response(response)
             
@@ -666,14 +589,14 @@ class TestBasicIOImportFK:
                 try:
                     api_tester.session.delete(
                         f"{api_tester.base_url}/api/identity/users/{user_id}",
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                     logger.info(f"Cleaned up user: {user_id}")
                 except Exception as e:
                     logger.warning(f"Failed to cleanup: {e}")
 
     @pytest.mark.skip(reason="TODO: Re-enable when we have a better FK scenario (tasks service not available)")
-    def test06_import_no_import_order_required(self, api_tester, auth_token, company_id):
+    def test06_import_no_import_order_required(self, api_tester, session_auth_cookies, session_user_info):
         """Tester l'import dans n'importe quel ordre grâce à la résolution FK
         
         NOTE: Ce test devrait importer des tasks AVANT leurs assigned_to users.
@@ -682,7 +605,8 @@ class TestBasicIOImportFK:
         
         La résolution FK devrait permettre de créer les tasks avec les bonnes références.
         """
-        assert auth_token, "Authentication failed"
+        company_id = session_user_info["company_id"]
+        assert session_auth_cookies, "Authentication failed"
         
         timestamp = int(time.time())
         created_user_ids = []
@@ -705,7 +629,7 @@ class TestBasicIOImportFK:
                         "last_name": "Test",
                         "company_id": company_id
                     },
-                    cookies=auth_token
+                    cookies=session_auth_cookies
                 )
                 assert user_response.status_code == 201, \
                     f"Failed to create user: {user_response.text}"
@@ -764,7 +688,7 @@ class TestBasicIOImportFK:
                 f"{api_tester.base_url}/api/basic-io/import",
                 files=files,
                 data=data,
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             api_tester.log_response(response)
             
@@ -798,7 +722,7 @@ class TestBasicIOImportFK:
             for i, task_id in enumerate([task1_id, task2_id]):
                 task_response = api_tester.session.get(
                     f"{api_tester.base_url}/api/identity/tasks/{task_id}",
-                    cookies=auth_token
+                    cookies=session_auth_cookies
                 )
                 assert task_response.status_code == 200, \
                     f"Failed to retrieve task {task_id}"
@@ -821,7 +745,7 @@ class TestBasicIOImportFK:
                 try:
                     api_tester.session.delete(
                         f"{api_tester.base_url}/api/identity/tasks/{task_id}",
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                     logger.info(f"Cleaned up task: {task_id}")
                 except Exception as e:
@@ -832,7 +756,7 @@ class TestBasicIOImportFK:
                 try:
                     api_tester.session.delete(
                         f"{api_tester.base_url}/api/identity/users/{user_id}",
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                     logger.info(f"Cleaned up user: {user_id}")
                 except Exception as e:

@@ -9,10 +9,8 @@ import sys
 import io
 import json
 from pathlib import Path
-import urllib3
 
 # Désactiver les warnings SSL pour les tests
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Ajouter le répertoire parent au path pour importer conftest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -20,57 +18,13 @@ from conftest import get_service_logger
 
 logger = get_service_logger('basic_io')
 
-
-class BasicIOAPITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        self.session.verify = False
-
-
 class TestBasicIOExportImport:
     """Tests d'intégration Export → Import avec résolution FK"""
     
-    @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return BasicIOAPITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Obtenir un token d'authentification"""
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        assert response.status_code == 200, f"Login failed: {response.text}"
-        
-        cookies = {
-            'access_token': response.cookies.get('access_token'),
-            'refresh_token': response.cookies.get('refresh_token')
-        }
-        
-        assert cookies['access_token'] or cookies['refresh_token'], \
-            "No auth cookies received"
-        
-        return cookies
-    
-    @pytest.fixture(scope="class")
-    def company_id(self, api_tester, auth_token):
-        """Récupérer le company_id de l'utilisateur authentifié"""
-        response = api_tester.session.get(
-            f"{api_tester.base_url}/api/auth/verify",
-            cookies=auth_token
-        )
-        assert response.status_code == 200, f"Failed to verify auth: {response.text}"
-        return response.json()['company_id']
 
-    def test01_export_import_cycle_with_fk_resolution(self, api_tester, auth_token, company_id):
+
+
+    def test01_export_import_cycle_with_fk_resolution(self, api_tester, session_auth_cookies, session_user_info):
         """
         Test complet: Export → Delete → Import avec résolution FK
         
@@ -82,7 +36,8 @@ class TestBasicIOExportImport:
         5. Importer le fichier d'export
         6. Vérifier que chaque user a retrouvé sa position d'origine
         """
-        assert auth_token, "Authentication failed"
+        company_id = session_user_info["company_id"]
+        assert session_auth_cookies, "Authentication failed"
         
         timestamp = int(time.time())
         created_positions = []
@@ -95,7 +50,7 @@ class TestBasicIOExportImport:
             
             org_units_response = api_tester.session.get(
                 f"{api_tester.base_url}/api/identity/organization_units",
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             assert org_units_response.status_code == 200
             org_units = org_units_response.json()
@@ -117,7 +72,7 @@ class TestBasicIOExportImport:
                         "company_id": company_id,
                         "description": f"Test position for export/import cycle"
                     },
-                    cookies=auth_token
+                    cookies=session_auth_cookies
                 )
                 assert response.status_code == 201, f"Failed to create position: {response.text}"
                 
@@ -145,7 +100,7 @@ class TestBasicIOExportImport:
                             "company_id": company_id,
                             "position_id": position['id']
                         },
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                     assert response.status_code == 201, f"Failed to create user: {response.text}"
                     
@@ -169,7 +124,7 @@ class TestBasicIOExportImport:
                     "url": "http://identity_service:5000/users",
                     "format": "json"
                 },
-                cookies=auth_token
+                cookies=session_auth_cookies
             )
             assert export_response.status_code == 200, f"Export failed: {export_response.text}"
             
@@ -214,7 +169,7 @@ class TestBasicIOExportImport:
             for user in created_users:
                 response = api_tester.session.delete(
                     f"{api_tester.base_url}/api/identity/users/{user['id']}",
-                    cookies=auth_token
+                    cookies=session_auth_cookies
                 )
                 if response.status_code in [204, 200]:
                     deleted_count += 1
@@ -253,7 +208,7 @@ class TestBasicIOExportImport:
                     f"{api_tester.base_url}/api/basic-io/import",
                     files=files,
                     data=data,
-                    cookies=auth_token
+                    cookies=session_auth_cookies
                 )
             
             assert import_response.status_code in [200, 201, 207], \
@@ -295,7 +250,7 @@ class TestBasicIOExportImport:
                 # Récupérer le user importé
                 response = api_tester.session.get(
                     f"{api_tester.base_url}/api/identity/users/{new_id}",
-                    cookies=auth_token
+                    cookies=session_auth_cookies
                 )
                 
                 if response.status_code != 200:
@@ -337,7 +292,7 @@ class TestBasicIOExportImport:
                 try:
                     api_tester.session.delete(
                         f"{api_tester.base_url}/api/identity/users/{new_id}",
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                 except Exception as e:
                     logger.warning(f"Failed to cleanup imported user {new_id}: {e}")
@@ -352,7 +307,7 @@ class TestBasicIOExportImport:
                 try:
                     api_tester.session.delete(
                         f"{api_tester.base_url}/api/identity/positions/{position['id']}",
-                        cookies=auth_token
+                        cookies=session_auth_cookies
                     )
                     logger.info(f"Cleaned up position: {position['title']}")
                 except Exception as e:

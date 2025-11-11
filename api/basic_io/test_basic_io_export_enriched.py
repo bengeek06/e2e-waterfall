@@ -2,15 +2,11 @@
 Tests for Basic I/O API - Foreign Key Enrichment functionality
 Tests pour l'enrichissement automatique des références (FK) lors de l'export
 """
-import requests
-import time
 import pytest
 import sys
 from pathlib import Path
-import urllib3
 
 # Désactiver les warnings SSL pour les tests
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Ajouter le répertoire parent au path pour importer conftest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -19,81 +15,12 @@ from conftest import get_service_logger
 logger = get_service_logger('basic_io')
 
 
-class BasicIOAPITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        self.session.verify = False
-        
-    def wait_for_api(self, endpoint: str, timeout: int = 120) -> bool:
-        """Attendre qu'une API soit disponible"""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                if response.status_code == 200:
-                    return True
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(2)
-        return False
-    
-    def log_request(self, method: str, url: str, data: dict = None):
-        """Log la requête envoyée"""
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            logger.debug(f">>> Request params: {data}")
-    
-    def log_response(self, response: requests.Response):
-        """Log la réponse reçue"""
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        logger.debug(f"<<< Response headers: {dict(response.headers)}")
-        try:
-            if response.text and len(response.text) < 2000:
-                logger.debug(f"<<< Response body: {response.json()}")
-        except Exception:
-            logger.debug(f"<<< Response body (text): {response.text[:200]}")
-
-
 class TestBasicIOExportEnriched:
     """Tests d'enrichissement automatique des FK via Basic I/O API"""
     
-    @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return BasicIOAPITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Obtenir un token d'authentification"""
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        assert response.status_code == 200, f"Login failed: {response.text}"
-        
-        # Récupérer les cookies
-        access_token = response.cookies.get('access_token')
-        refresh_token = response.cookies.get('refresh_token')
-        
-        cookies = {
-            'access_token': access_token,
-            'refresh_token': refresh_token
-        }
-        
-        assert cookies['access_token'] or cookies['refresh_token'], \
-            "No auth cookies received"
-        
-        return cookies
-
-    def test01_export_enriched_detect_fk_fields(self, api_tester, auth_token):
+    def test01_export_enriched_detect_fk_fields(self, api_tester, session_auth_cookies):
         """Tester la détection automatique des champs FK (UUID)"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Export depuis users avec enrich=true
         # Users a plusieurs FK: company_id, organization_unit_id, etc.
@@ -107,7 +34,7 @@ class TestBasicIOExportEnriched:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -144,9 +71,9 @@ class TestBasicIOExportEnriched:
         logger.info(f"Sample FK metadata: {first_fk}")
         logger.info(f"Total records exported: {len(data)}")
 
-    def test02_export_enriched_users_lookup_email(self, api_tester, auth_token):
+    def test02_export_enriched_users_lookup_email(self, api_tester, session_auth_cookies):
         """Tester l'enrichissement avec lookup_field 'email' pour users"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Export enrichi depuis users
         # Le service devrait détecter que 'email' est le lookup_field approprié
@@ -160,7 +87,7 @@ class TestBasicIOExportEnriched:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -197,9 +124,9 @@ class TestBasicIOExportEnriched:
         logger.info("✅ Users export with email lookup successful")
         logger.info(f"Exported {len(data)} users")
 
-    def test03_export_enriched_projects_lookup_name(self, api_tester, auth_token):
+    def test03_export_enriched_projects_lookup_name(self, api_tester, session_auth_cookies):
         """Tester l'enrichissement avec lookup_field 'name' pour projects"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Export enrichi depuis projects
         # Le service devrait détecter que 'name' est un bon lookup_field
@@ -213,7 +140,7 @@ class TestBasicIOExportEnriched:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         # Project service peut ne pas être disponible en test
@@ -248,9 +175,9 @@ class TestBasicIOExportEnriched:
         
         logger.info("✅ Projects export with name lookup successful")
 
-    def test04_export_enriched_parent_id_special_handling(self, api_tester, auth_token):
+    def test04_export_enriched_parent_id_special_handling(self, api_tester, session_auth_cookies):
         """Tester le traitement spécial de parent_id (self-reference)"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Export enrichi depuis organization_units (qui a parent_id self-reference)
         target_url = "http://identity_service:5000/organization_units"
@@ -263,7 +190,7 @@ class TestBasicIOExportEnriched:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -316,9 +243,9 @@ class TestBasicIOExportEnriched:
         
         logger.info("✅ Parent_id special handling test successful")
 
-    def test05_export_enriched_verify_lookup_values(self, api_tester, auth_token):
+    def test05_export_enriched_verify_lookup_values(self, api_tester, session_auth_cookies):
         """Tester que les valeurs de lookup_field sont présentes dans les données"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Export enrichi depuis users
         target_url = "http://identity_service:5000/users"
@@ -331,7 +258,7 @@ class TestBasicIOExportEnriched:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -380,9 +307,9 @@ class TestBasicIOExportEnriched:
         
         logger.info(f"✅ Lookup values verification completed for {len(data)} records")
 
-    def test06_export_enriched_csv_preserves_metadata(self, api_tester, auth_token):
+    def test06_export_enriched_csv_preserves_metadata(self, api_tester, session_auth_cookies):
         """Tester que CSV avec enrich=true inclut des métadonnées (commentaires ou colonnes spéciales)"""
-        assert auth_token, "Authentication failed"
+        assert session_auth_cookies, "Authentication failed"
         
         # Export CSV enrichi
         target_url = "http://identity_service:5000/users"
@@ -395,7 +322,7 @@ class TestBasicIOExportEnriched:
         }
         
         api_tester.log_request('GET', url, params)
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \

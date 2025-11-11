@@ -6,11 +6,9 @@ import time
 import pytest
 import sys
 from pathlib import Path
-import urllib3
 import io
 
 # Désactiver les warnings SSL pour les tests (certificats auto-signés)
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Ajouter le répertoire parent au path pour importer conftest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -18,101 +16,22 @@ from conftest import get_service_logger
 
 logger = get_service_logger('storage')
 
-
-class StorageAPITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        # Ignorer les certificats auto-signés pour les tests
-        self.session.verify = False
-        
-    def wait_for_api(self, endpoint: str, timeout: int = 120) -> bool:
-        """Attendre qu'une API soit disponible"""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                logger.debug(f"wait_for_api - Status: {response.status_code}")
-                if response.status_code == 200:
-                    return True
-            except requests.exceptions.RequestException as e:
-                logger.debug(f"Request exception: {e}")
-                pass
-            time.sleep(2)
-        return False
-    
-    def log_request(self, method: str, url: str, data: dict = None):
-        """Log la requête envoyée"""
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            safe_data = data.copy() if isinstance(data, dict) else data
-            logger.debug(f">>> Request body: {safe_data}")
-    
-    def log_response(self, response: requests.Response):
-        """Log la réponse reçue"""
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        logger.debug(f"<<< Response headers: {dict(response.headers)}")
-        try:
-            if response.text and response.headers.get('content-type', '').startswith('application/json'):
-                logger.debug(f"<<< Response body: {response.json()}")
-        except Exception:
-            logger.debug(f"<<< Response body (raw): {response.text[:200]}")
-
-
 class TestStorageDownload:
     """Tests de téléchargement de fichiers via Storage API"""
     
+
+
     @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return StorageAPITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Obtenir un token d'authentification"""
-        assert api_tester.wait_for_api("/api/auth/version"), "API Auth not ready"
-        
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        if response.status_code == 200:
-            access_token = response.cookies.get('access_token')
-            refresh_token = response.cookies.get('refresh_token')
-            return {
-                'access_token': access_token,
-                'refresh_token': refresh_token
-            }
-        return None
-    
-    @pytest.fixture(scope="class")
-    def user_info(self, api_tester, auth_token):
+    def user_info(self, api_tester, session_auth_cookies, session_user_info):
         """Récupérer les informations de l'utilisateur connecté"""
-        assert auth_token is not None, "No auth cookies available"
-        
-        response = api_tester.session.get(
-            f"{api_tester.base_url}/api/auth/verify",
-            cookies=auth_token
-        )
-        
-        assert response.status_code == 200, f"Failed to verify token: {response.text}"
-        
-        user_data = response.json()
-        logger.info(f"Connected user: {user_data.get('email')} (ID: {user_data.get('user_id')})")
-        
         return {
-            'user_id': user_data.get('user_id'),
-            'company_id': user_data.get('company_id'),
-            'email': user_data.get('email')
+            "user_id": session_user_info.get("user_id") or session_user_info.get("id"),
+            "company_id": session_user_info["company_id"],
+            "email": session_user_info.get("email")
         }
     
     @pytest.fixture(scope="class")
-    def uploaded_file(self, api_tester, auth_token, user_info):
+    def uploaded_file(self, api_tester, session_auth_cookies, user_info):
         """Upload un fichier de test pour les tests de download"""
         user_id = user_info['user_id']
         
@@ -131,7 +50,7 @@ class TestStorageDownload:
         }
         
         url = f"{api_tester.base_url}/api/storage/upload/proxy"
-        response = api_tester.session.post(url, files=files, data=data, cookies=auth_token)
+        response = api_tester.session.post(url, files=files, data=data, cookies=session_auth_cookies)
         
         assert response.status_code == 201, f"Failed to upload test file: {response.text}"
         
@@ -146,9 +65,9 @@ class TestStorageDownload:
         logger.info(f"Test file uploaded: {file_info['file_id']}")
         return file_info
 
-    def test01_download_presign_url_generation(self, api_tester, auth_token, user_info, uploaded_file):
+    def test01_download_presign_url_generation(self, api_tester, session_auth_cookies, user_info, uploaded_file):
         """Tester la génération d'URL présignée pour download"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         
@@ -161,7 +80,7 @@ class TestStorageDownload:
         }
         api_tester.log_request('GET', url, params)
         
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -174,9 +93,9 @@ class TestStorageDownload:
         logger.info(f"✅ Presigned download URL generated")
         logger.info(f"Expires in: {presign_response['expires_in']} seconds")
 
-    def test02_download_presign_missing_file_id(self, api_tester, auth_token, user_info):
+    def test02_download_presign_missing_file_id(self, api_tester, session_auth_cookies, user_info):
         """Tester le download presign sans bucket_type (doit échouer)"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         
@@ -189,7 +108,7 @@ class TestStorageDownload:
         url = f"{api_tester.base_url}/api/storage/download/presign"
         api_tester.log_request('GET', url, params)
         
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 400, \
@@ -197,9 +116,9 @@ class TestStorageDownload:
         
         logger.info("✅ Missing bucket_type correctly rejected")
 
-    def test03_download_presign_invalid_file_id(self, api_tester, auth_token, user_info):
+    def test03_download_presign_invalid_file_id(self, api_tester, session_auth_cookies, user_info):
         """Tester le download presign avec fichier inexistant"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         
@@ -212,7 +131,7 @@ class TestStorageDownload:
         url = f"{api_tester.base_url}/api/storage/download/presign"
         api_tester.log_request('GET', url, params)
         
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code in [404, 400], \
@@ -220,9 +139,9 @@ class TestStorageDownload:
         
         logger.info("✅ Non-existent file correctly rejected")
 
-    def test04_download_proxy_success(self, api_tester, auth_token, user_info, uploaded_file):
+    def test04_download_proxy_success(self, api_tester, session_auth_cookies, user_info, uploaded_file):
         """Tester le téléchargement via proxy (succès)"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         expected_content = uploaded_file['content']
@@ -236,7 +155,7 @@ class TestStorageDownload:
         }
         api_tester.log_request('GET', url, params)
         
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
@@ -255,9 +174,9 @@ class TestStorageDownload:
         logger.info("✅ File downloaded via proxy successfully")
         logger.info(f"Downloaded {len(response.content)} bytes")
 
-    def test05_download_proxy_missing_file_id(self, api_tester, auth_token, user_info):
+    def test05_download_proxy_missing_file_id(self, api_tester, session_auth_cookies, user_info):
         """Tester le download proxy sans logical_path (doit échouer)"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         
@@ -269,12 +188,12 @@ class TestStorageDownload:
         }
         api_tester.log_request('GET', url, params)
         
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
 
-    def test06_download_proxy_invalid_file_id(self, api_tester, auth_token, user_info):
+    def test06_download_proxy_invalid_file_id(self, api_tester, session_auth_cookies, user_info):
         """Tester le download proxy avec fichier invalide"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         
@@ -287,12 +206,12 @@ class TestStorageDownload:
         }
         api_tester.log_request('GET', url, params)
         
-        response = api_tester.session.get(url, params=params, cookies=auth_token)
+        response = api_tester.session.get(url, params=params, cookies=session_auth_cookies)
         api_tester.log_response(response)
 
-    def test07_download_with_version(self, api_tester, auth_token, user_info):
+    def test07_download_with_version(self, api_tester, session_auth_cookies, user_info):
         """Tester le download avec versioning"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         
@@ -306,13 +225,13 @@ class TestStorageDownload:
             'bucket_id': user_id,
             'logical_path': 'test_version_file.txt'
         }
-        response_v1 = api_tester.session.post(upload_url, data=data_v1, files=files_v1, cookies=auth_token)
+        response_v1 = api_tester.session.post(upload_url, data=data_v1, files=files_v1, cookies=session_auth_cookies)
         assert response_v1.status_code == 201, f"First upload failed: {response_v1.text}"
         
         # Version 2 (même fichier)
         files_v2 = {'file': ('test_version_file.txt', b'Version 2 content - updated', 'text/plain')}
         data_v2 = data_v1.copy()
-        response_v2 = api_tester.session.post(upload_url, data=data_v2, files=files_v2, cookies=auth_token)
+        response_v2 = api_tester.session.post(upload_url, data=data_v2, files=files_v2, cookies=session_auth_cookies)
         assert response_v2.status_code == 201, f"Second upload failed: {response_v2.text}"
         
         # Télécharger la dernière version
@@ -323,12 +242,12 @@ class TestStorageDownload:
             "logical_path": "test_version_file.txt"
         }
         
-        response = api_tester.session.get(download_url, params=params, cookies=auth_token)
+        response = api_tester.session.get(download_url, params=params, cookies=session_auth_cookies)
         assert response.status_code == 200, f"Failed to download file: {response.text}"
 
-    def test08_list_files_in_directory(self, api_tester, auth_token, user_info):
+    def test08_list_files_in_directory(self, api_tester, session_auth_cookies, user_info):
         """Tester la liste des fichiers dans un répertoire"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         user_id = user_info['user_id']
         
@@ -342,7 +261,7 @@ class TestStorageDownload:
         url = f"{api_tester.base_url}/api/storage/list"
         api_tester.log_request('GET', url, list_params)
         
-        response = api_tester.session.get(url, params=list_params, cookies=auth_token)
+        response = api_tester.session.get(url, params=list_params, cookies=session_auth_cookies)
         api_tester.log_response(response)
         
         assert response.status_code == 200, \
