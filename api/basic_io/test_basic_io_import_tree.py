@@ -200,27 +200,32 @@ class TestBasicIOImportTree:
         try:
             # Create flat structure where children are defined BEFORE parents
             # This tests the topological sort capability
+            parent_id = str(uuid.uuid4())
+            child_a_id = str(uuid.uuid4())
+            child_b_id = str(uuid.uuid4())
+            grandchild_id = str(uuid.uuid4())
+            
             flat_tree = [
                 {
-                    "id": "child-a",
+                    "_original_id": child_a_id,
                     "name": f"Team A {timestamp}",
                     "company_id": company_id,
-                    "parent_id": "parent-1"  # References parent defined later
+                    "parent_id": parent_id  # References parent defined later
                 },
                 {
-                    "id": "child-b",
+                    "_original_id": child_b_id,
                     "name": f"Team B {timestamp}",
                     "company_id": company_id,
-                    "parent_id": "parent-1"  # References parent defined later
+                    "parent_id": parent_id  # References parent defined later
                 },
                 {
-                    "id": "grandchild-1",
+                    "_original_id": grandchild_id,
                     "name": f"Sub-team A1 {timestamp}",
                     "company_id": company_id,
-                    "parent_id": "child-a"  # References child defined earlier
+                    "parent_id": child_a_id  # References child defined earlier
                 },
                 {
-                    "id": "parent-1",
+                    "_original_id": parent_id,
                     "name": f"Department {timestamp}",
                     "company_id": company_id,
                     "parent_id": None  # Root node
@@ -283,8 +288,8 @@ class TestBasicIOImportTree:
                 logger.info(f"ID Mapping: {json.dumps(id_mapping, indent=2)}")
                 
                 # Verify parent was imported first (should have a new UUID)
-                assert 'parent-1' in id_mapping, "parent-1 should be in id_mapping"
-                assert 'child-a' in id_mapping, "child-a should be in id_mapping"
+                assert parent_id in id_mapping, f"{parent_id} should be in id_mapping"
+                assert child_a_id in id_mapping, f"{child_a_id} should be in id_mapping"
             
             logger.info("✓ Topological sort worked - parents imported before children")
             logger.info(f"✓ All 4 organization units created with correct references")
@@ -324,14 +329,22 @@ class TestBasicIOImportTree:
             #  |
             #  c1
             
+            root_id = str(uuid.uuid4())
+            a1_id = str(uuid.uuid4())
+            a2_id = str(uuid.uuid4())
+            b1_id = str(uuid.uuid4())
+            b2_id = str(uuid.uuid4())
+            b3_id = str(uuid.uuid4())
+            c1_id = str(uuid.uuid4())
+            
             complex_tree = [
-                {"id": "c1", "name": f"Level 3 Unit {timestamp}", "company_id": company_id, "parent_id": "b1"},
-                {"id": "b2", "name": f"Level 2B Unit {timestamp}", "company_id": company_id, "parent_id": "a1"},
-                {"id": "a2", "name": f"Level 1B Unit {timestamp}", "company_id": company_id, "parent_id": "root"},
-                {"id": "b1", "name": f"Level 2A Unit {timestamp}", "company_id": company_id, "parent_id": "a1"},
-                {"id": "root", "name": f"Root Department {timestamp}", "company_id": company_id, "parent_id": None},
-                {"id": "a1", "name": f"Level 1A Unit {timestamp}", "company_id": company_id, "parent_id": "root"},
-                {"id": "b3", "name": f"Level 2C Unit {timestamp}", "company_id": company_id, "parent_id": "a2"},
+                {"_original_id": c1_id, "name": f"Level 3 Unit {timestamp}", "company_id": company_id, "parent_id": b1_id},
+                {"_original_id": b2_id, "name": f"Level 2B Unit {timestamp}", "company_id": company_id, "parent_id": a1_id},
+                {"_original_id": a2_id, "name": f"Level 1B Unit {timestamp}", "company_id": company_id, "parent_id": root_id},
+                {"_original_id": b1_id, "name": f"Level 2A Unit {timestamp}", "company_id": company_id, "parent_id": a1_id},
+                {"_original_id": root_id, "name": f"Root Department {timestamp}", "company_id": company_id, "parent_id": None},
+                {"_original_id": a1_id, "name": f"Level 1A Unit {timestamp}", "company_id": company_id, "parent_id": root_id},
+                {"_original_id": b3_id, "name": f"Level 2C Unit {timestamp}", "company_id": company_id, "parent_id": a2_id},
             ]
 
             logger.info(f"Complex dependency graph (7 nodes, completely out of order):")
@@ -606,19 +619,19 @@ class TestBasicIOImportTree:
             
             tree_with_uuids = [
                 {
-                    "id": original_parent_id,
+                    "_original_id": original_parent_id,
                     "name": f"Parent Unit {timestamp}",
                     "company_id": company_id,
                     "parent_id": None
                 },
                 {
-                    "id": original_child1_id,
+                    "_original_id": original_child1_id,
                     "name": f"Child Unit 1 {timestamp}",
                     "company_id": company_id,
                     "parent_id": original_parent_id  # Reference to original UUID
                 },
                 {
-                    "id": original_child2_id,
+                    "_original_id": original_child2_id,
                     "name": f"Child Unit 2 {timestamp}",
                     "company_id": company_id,
                     "parent_id": original_parent_id  # Reference to original UUID
