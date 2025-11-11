@@ -173,13 +173,17 @@ class TestBasicIOImportTree:
             logger.info("✓ All 8 organization units created with correct hierarchy")
 
         finally:
-            # Cleanup: delete created organization units
+            # Cleanup: delete root organization units only (CASCADE will delete children)
             if created_org_units:
-                logger.info(f"Cleaning up {len(created_org_units)} organization units...")
+                logger.info(f"Cleaning up organization units (deleting roots, CASCADE handles children)...")
+                # Delete only roots - children will be cascade deleted
                 for org_unit_id in created_org_units:
                     try:
+                        # Try to delete - if 404, it was already cascade deleted
                         delete_url = f"{IDENTITY_URL}/organization_units/{org_unit_id}"
-                        api_tester.session.delete(delete_url, cookies=session_auth_cookies)
+                        response = api_tester.session.delete(delete_url, cookies=session_auth_cookies)
+                        if response.status_code not in [204, 404]:
+                            logger.warning(f"Unexpected delete status {response.status_code} for {org_unit_id}")
                     except Exception as e:
                         logger.warning(f"Failed to delete org unit {org_unit_id}: {e}")
 
@@ -297,12 +301,14 @@ class TestBasicIOImportTree:
         finally:
             # Cleanup: delete created organization units (in reverse order)
             if created_org_units:
-                logger.info(f"Cleaning up {len(created_org_units)} organization units...")
-                # Delete in reverse to avoid FK constraint issues
-                for org_unit_id in reversed(created_org_units):
+                logger.info(f"Cleaning up organization units (CASCADE deletes children)...")
+                # Delete all - CASCADE handles dependencies, 404 means already cascade-deleted
+                for org_unit_id in created_org_units:
                     try:
                         delete_url = f"{IDENTITY_URL}/organization_units/{org_unit_id}"
-                        api_tester.session.delete(delete_url, cookies=session_auth_cookies)
+                        response = api_tester.session.delete(delete_url, cookies=session_auth_cookies)
+                        if response.status_code not in [204, 404]:
+                            logger.warning(f"Unexpected delete status {response.status_code} for {org_unit_id}")
                     except Exception as e:
                         logger.warning(f"Failed to delete org unit {org_unit_id}: {e}")
 
