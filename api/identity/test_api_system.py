@@ -12,34 +12,7 @@ from conftest import get_service_logger
 
 logger = get_service_logger('identity')
 
-class APITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        self.session.verify = False
-        
-    def log_request(self, method: str, url: str, data: dict = None):
-        """Log la requête envoyée"""
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            logger.debug(f">>> Request body: {data}")
-    
-    def log_response(self, response: requests.Response):
-        """Log la réponse reçue"""
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        logger.debug(f"<<< Response headers: {dict(response.headers)}")
-        try:
-            response_json = response.json()
-            logger.debug(f"<<< Response body: {response_json}")
-        except:
-            logger.debug(f"<<< Response body (text): {response.text[:200]}")
-
-
 class TestIdentitySystemEndpoints:
-    @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return APITester(app_config)
-
     def test01_health_check(self, api_tester):
         """Tester le endpoint /health"""
         url = f"{api_tester.base_url}/api/identity/health"

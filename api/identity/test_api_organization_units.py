@@ -10,77 +10,13 @@ from conftest import get_service_logger
 
 logger = get_service_logger('identity')
 
-class APITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        self.session.verify = False
-        self.auth_cookies = None
-    
-    @staticmethod
-    def log_request(method, url, data=None, cookies=None):
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            safe_data = data.copy() if isinstance(data, dict) else data
-            if isinstance(safe_data, dict) and 'password' in safe_data:
-                safe_data['password'] = '***'
-            logger.debug(f">>> Request body: {safe_data}")
-    
-    @staticmethod
-    def log_response(response):
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        try:
-            if response.text:
-                logger.debug(f"<<< Response body: {response.json()}")
-        except:
-            logger.debug(f"<<< Response body (raw): {response.text}")
-        
-    def wait_for_api(self, endpoint: str, timeout: int = 10) -> bool:
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                if response.status_code == 200:
-                    return True
-            except:
-                pass
-            time.sleep(2)
-        return False
-
 class TestAPIOrganizationUnits:
-    @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return APITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        assert api_tester.wait_for_api("/api/auth/version"), "API Auth not ready"
-        
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        if response.status_code == 200:
-            return {
-                'access_token': response.cookies.get('access_token'),
-                'refresh_token': response.cookies.get('refresh_token')
-            }
-        return None
-
     @pytest.fixture(scope="function")
-    def setup_test_data(self, api_tester, auth_token):
-        assert auth_token is not None, "No auth cookies available"
+    def setup_test_data(self, api_tester, session_auth_cookies, session_user_info):
+        assert session_auth_cookies is not None, "No auth cookies available"
         
-        cookies_dict = {
-            'access_token': auth_token['access_token'],
-            'refresh_token': auth_token['refresh_token']
-        }
+        cookies_dict = session_auth_cookies
+        api_tester.cookies_dict = cookies_dict
         
         verify_response = api_tester.session.get(
             f"{api_tester.base_url}/api/auth/verify",
@@ -113,7 +49,7 @@ class TestAPIOrganizationUnits:
         
         logger.info("✅ Cleanup completed")
 
-    def test01_get_organization_units_list(self, api_tester, auth_token, setup_test_data):
+    def test01_get_organization_units_list(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester GET /organization_units"""
         company_id, cookies_dict, resources = setup_test_data
         
@@ -131,7 +67,7 @@ class TestAPIOrganizationUnits:
         
         logger.info(f"✅ Retrieved {len(result)} organization units")
 
-    def test02_create_organization_unit(self, api_tester, auth_token, setup_test_data):
+    def test02_create_organization_unit(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester POST /organization_units"""
         company_id, cookies_dict, resources = setup_test_data
         
@@ -159,7 +95,7 @@ class TestAPIOrganizationUnits:
         
         logger.info(f"✅ Organization unit created: {result['id']}")
 
-    def test03_get_organization_unit_by_id(self, api_tester, auth_token, setup_test_data):
+    def test03_get_organization_unit_by_id(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester GET /organization_units/{id}"""
         company_id, cookies_dict, resources = setup_test_data
         
@@ -193,7 +129,7 @@ class TestAPIOrganizationUnits:
         
         logger.info(f"✅ Organization unit retrieved: {result['name']}")
 
-    def test04_create_child_unit(self, api_tester, auth_token, setup_test_data):
+    def test04_create_child_unit(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester création d'une unité enfant avec parent_id"""
         company_id, cookies_dict, resources = setup_test_data
         
@@ -237,7 +173,7 @@ class TestAPIOrganizationUnits:
         
         logger.info(f"✅ Child organization unit created: {result['id']}")
 
-    def test05_get_children_units(self, api_tester, auth_token, setup_test_data):
+    def test05_get_children_units(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester GET /organization_units/{id}/children"""
         company_id, cookies_dict, resources = setup_test_data
         
@@ -290,7 +226,7 @@ class TestAPIOrganizationUnits:
         
         logger.info(f"✅ Retrieved {len(result)} children units")
 
-    def test06_patch_organization_unit(self, api_tester, auth_token, setup_test_data):
+    def test06_patch_organization_unit(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester PATCH /organization_units/{id}"""
 
         """Tester PATCH /organization_units/{id}"""
@@ -332,7 +268,7 @@ class TestAPIOrganizationUnits:
         
         logger.info(f"✅ Organization unit patched successfully")
 
-    def test06_put_organization_unit(self, api_tester, auth_token, setup_test_data):
+    def test06_put_organization_unit(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester PUT /organization_units/{id}"""
         company_id, cookies_dict, resources = setup_test_data
         
@@ -373,7 +309,7 @@ class TestAPIOrganizationUnits:
         
         logger.info(f"✅ Organization unit updated successfully")
 
-    def test07_delete_organization_unit(self, api_tester, auth_token, setup_test_data):
+    def test07_delete_organization_unit(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester DELETE /organization_units/{id}"""
         company_id, cookies_dict, resources = setup_test_data
         

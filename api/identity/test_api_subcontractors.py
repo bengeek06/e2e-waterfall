@@ -10,77 +10,13 @@ from conftest import get_service_logger
 
 logger = get_service_logger('identity')
 
-class APITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        self.session.verify = False
-        self.auth_cookies = None
-    
-    @staticmethod
-    def log_request(method, url, data=None, cookies=None):
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            safe_data = data.copy() if isinstance(data, dict) else data
-            if isinstance(safe_data, dict) and 'password' in safe_data:
-                safe_data['password'] = '***'
-            logger.debug(f">>> Request body: {safe_data}")
-    
-    @staticmethod
-    def log_response(response):
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        try:
-            if response.text:
-                logger.debug(f"<<< Response body: {response.json()}")
-        except:
-            logger.debug(f"<<< Response body (raw): {response.text}")
-        
-    def wait_for_api(self, endpoint: str, timeout: int = 10) -> bool:
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                if response.status_code == 200:
-                    return True
-            except:
-                pass
-            time.sleep(2)
-        return False
-
 class TestAPISubcontractors:
-    @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return APITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        assert api_tester.wait_for_api("/api/auth/version"), "API Auth not ready"
-        
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        if response.status_code == 200:
-            return {
-                'access_token': response.cookies.get('access_token'),
-                'refresh_token': response.cookies.get('refresh_token')
-            }
-        return None
-
     @pytest.fixture(scope="function")
-    def setup_test_data(self, api_tester, auth_token):
-        assert auth_token is not None, "No auth cookies available"
+    def setup_test_data(self, api_tester, session_auth_cookies, session_user_info):
+        assert session_auth_cookies is not None, "No auth cookies available"
         
-        cookies_dict = {
-            'access_token': auth_token['access_token'],
-            'refresh_token': auth_token['refresh_token']
-        }
+        cookies_dict = session_auth_cookies
+        api_tester.cookies_dict = cookies_dict
         
         verify_response = api_tester.session.get(
             f"{api_tester.base_url}/api/auth/verify",
@@ -113,7 +49,7 @@ class TestAPISubcontractors:
         
         logger.info("✅ Cleanup completed")
 
-    def test01_get_subcontractors_list(self, api_tester, auth_token, setup_test_data):
+    def test01_get_subcontractors_list(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester GET /subcontractors"""
         company_id, cookies_dict, resources = setup_test_data
         
@@ -131,7 +67,7 @@ class TestAPISubcontractors:
         
         logger.info(f"✅ Retrieved {len(result)} subcontractors")
 
-    def test02_create_subcontractor(self, api_tester, auth_token, setup_test_data):
+    def test02_create_subcontractor(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester POST /subcontractors"""
         company_id, cookies_dict, resources = setup_test_data
         
@@ -158,7 +94,7 @@ class TestAPISubcontractors:
         
         logger.info(f"✅ Subcontractor created: {result['id']}")
 
-    def test03_get_subcontractor_by_id(self, api_tester, auth_token, setup_test_data):
+    def test03_get_subcontractor_by_id(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester GET /subcontractors/{id}"""
         company_id, cookies_dict, resources = setup_test_data
         
@@ -192,7 +128,7 @@ class TestAPISubcontractors:
         
         logger.info(f"✅ Subcontractor retrieved: {result['name']}")
 
-    def test04_patch_subcontractor(self, api_tester, auth_token, setup_test_data):
+    def test04_patch_subcontractor(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester PATCH /subcontractors/{id}"""
         company_id, cookies_dict, resources = setup_test_data
         
@@ -230,7 +166,7 @@ class TestAPISubcontractors:
         
         logger.info(f"✅ Subcontractor patched successfully")
 
-    def test05_put_subcontractor(self, api_tester, auth_token, setup_test_data):
+    def test05_put_subcontractor(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester PUT /subcontractors/{id}"""
         company_id, cookies_dict, resources = setup_test_data
         
@@ -269,7 +205,7 @@ class TestAPISubcontractors:
         
         logger.info(f"✅ Subcontractor updated successfully")
 
-    def test06_delete_subcontractor(self, api_tester, auth_token, setup_test_data):
+    def test06_delete_subcontractor(self, api_tester, session_auth_cookies, setup_test_data):
         """Tester DELETE /subcontractors/{id}"""
         company_id, cookies_dict, resources = setup_test_data
         
