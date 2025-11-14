@@ -24,11 +24,12 @@ class TestBasicIOExportCSV:
         assert session_auth_cookies, "Authentication failed"
         
         # Export CSV depuis l'endpoint users
-        target_url = "http://identity_service:5000/users"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/users",
             "type": "csv"
         }
         
@@ -80,11 +81,11 @@ class TestBasicIOExportCSV:
         assert session_auth_cookies, "Authentication failed"
         
         # Export depuis roles (peut contenir des descriptions avec caractères spéciaux)
-        target_url = "http://guardian_service:5000/roles"
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "guardian",
+            "path": "/roles",
             "type": "csv"
         }
         
@@ -169,11 +170,12 @@ class TestBasicIOExportCSV:
             logger.info(f"✅ Created {len(created_user_ids)} test users")
             
             # Export depuis users
-            target_url = "http://identity_service:5000/users"
+            
             
             url = f"{api_tester.base_url}/api/basic-io/export"
             params = {
-                "url": target_url,
+                "service": "identity",
+            "path": "/users",
                 "type": "csv"
             }
             
@@ -252,11 +254,12 @@ class TestBasicIOExportCSV:
         # Utiliser un endpoint qui pourrait retourner un résultat vide
         # Note: Ceci peut varier selon l'état de la base de données
         # On teste la gestion d'un résultat vide, pas la recherche d'un endpoint vide
-        target_url = "http://identity_service:5000/users?email=nonexistent@test.invalid"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/users",
             "type": "csv"
         }
         
@@ -291,11 +294,12 @@ class TestBasicIOExportCSV:
     def test05_export_csv_without_auth(self, api_tester):
         """Tester l'export CSV sans authentification (doit échouer)"""
         
-        target_url = "http://identity_service:5000/users"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/users",
             "type": "csv"
         }
         

@@ -81,11 +81,12 @@ class TestBasicIOExportMermaid:
         assert tree_structure, "Tree structure not created"
         
         # Export en format Mermaid flowchart
-        target_url = "http://identity_service:5000/organization_units"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/organization_units",
             "type": "mermaid",
             "diagram_type": "flowchart"
         }
@@ -139,11 +140,12 @@ class TestBasicIOExportMermaid:
         assert tree_structure, "Tree structure not created"
         
         # Export en format Mermaid graph
-        target_url = "http://identity_service:5000/organization_units"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/organization_units",
             "type": "mermaid",
             "diagram_type": "graph"
         }
@@ -182,11 +184,12 @@ class TestBasicIOExportMermaid:
         assert tree_structure, "Tree structure not created"
         
         # Export en format Mermaid mindmap
-        target_url = "http://identity_service:5000/organization_units"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/organization_units",
             "type": "mermaid",
             "diagram_type": "mindmap"
         }
@@ -226,11 +229,12 @@ class TestBasicIOExportMermaid:
         assert tree_structure, "Tree structure not created"
         
         # Export Mermaid (devrait inclure des métadonnées dans les commentaires)
-        target_url = "http://identity_service:5000/organization_units"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/organization_units",
             "type": "mermaid",
             "diagram_type": "flowchart"
         }
@@ -274,11 +278,12 @@ class TestBasicIOExportMermaid:
         assert session_auth_cookies, "Authentication failed"
         
         # Export Mermaid sans diagram_type
-        target_url = "http://identity_service:5000/organization_units"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/organization_units",
             "type": "mermaid"
             # Pas de diagram_type - devrait utiliser 'flowchart' par défaut
         }
@@ -315,11 +320,12 @@ class TestBasicIOExportMermaid:
     def test06_export_mermaid_without_auth(self, api_tester):
         """Tester l'export Mermaid sans authentification (doit échouer)"""
         
-        target_url = "http://identity_service:5000/organization_units"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/organization_units",
             "type": "mermaid"
         }
         

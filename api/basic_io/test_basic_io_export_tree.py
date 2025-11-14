@@ -102,11 +102,10 @@ class TestBasicIOExportTree:
             logger.info("✅ Created tree structure: 1 root, 2 children, 1 grandchild")
             
             # Export avec tree=true
-            target_url = "http://identity_service:5000/organization_units"
-            
             url = f"{api_tester.base_url}/api/basic-io/export"
             params = {
-                "url": target_url,
+                "service": "identity",
+                "path": "/organization_units",
                 "type": "json",
                 "tree": "true",  # Demander structure arborescente
                 "enrich": "false"
@@ -171,11 +170,12 @@ class TestBasicIOExportTree:
         assert session_auth_cookies, "Authentication failed"
         
         # Export depuis organization_units (qui a parent_id), format flat
-        target_url = "http://identity_service:5000/organization_units"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/organization_units",
             "type": "json",
             "tree": "false",  # Demander format flat
             "enrich": "false"
@@ -221,11 +221,12 @@ class TestBasicIOExportTree:
         
         # Export depuis organization_units (qui a parent_id)
         # Le service doit détecter automatiquement la structure
-        target_url = "http://identity_service:5000/organization_units"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/organization_units",
             "type": "json",
             "enrich": "false"
             # Pas de paramètre tree - détection automatique
@@ -270,11 +271,12 @@ class TestBasicIOExportTree:
         assert session_auth_cookies, "Authentication failed"
         
         # Export depuis organization_units
-        target_url = "http://identity_service:5000/organization_units"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/organization_units",
             "type": "json",
             "enrich": "false"
         }
@@ -334,11 +336,12 @@ class TestBasicIOExportTree:
         
         # Export tree avec enrich=true
         # Le parent_id devrait être enrichi avec les infos du parent
-        target_url = "http://identity_service:5000/organization_units"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/organization_units",
             "type": "json",
             "tree": "true",
             "enrich": "true"  # Enrichir les références, y compris parent_id
@@ -390,11 +393,12 @@ class TestBasicIOExportTree:
         
         # Export CSV d'organization_units (qui a parent_id)
         # CSV est toujours flat, mais parent_id doit être une colonne
-        target_url = "http://identity_service:5000/organization_units"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/organization_units",
             "type": "csv"
             # tree parameter ignoré pour CSV (toujours flat)
         }

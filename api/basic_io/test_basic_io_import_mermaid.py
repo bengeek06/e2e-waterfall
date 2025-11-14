@@ -95,7 +95,7 @@ class TestBasicIOImportMermaid:
             mermaid_file = BytesIO(mermaid_content.encode('utf-8'))
             
             # Import via Basic I/O - type and company_id in query params
-            import_url = f"{BASE_URL}/import?type=mermaid&url=http://identity_service:5000/organization_units&company_id={company_id}"
+            import_url = f"{BASE_URL}/import?type=mermaid&service=identity&path=/organization_units&company_id={company_id}"
             files = {
                 'file': ('flowchart.mmd', mermaid_file, 'text/plain')
             }
@@ -193,7 +193,7 @@ class TestBasicIOImportMermaid:
             mermaid_file = BytesIO(mermaid_content.encode('utf-8'))
             
             # Import via Basic I/O - type and company_id in query params
-            import_url = f"{BASE_URL}/import?type=mermaid&url=http://identity_service:5000/organization_units&company_id={company_id}"
+            import_url = f"{BASE_URL}/import?type=mermaid&service=identity&path=/organization_units&company_id={company_id}"
             files = {
                 'file': ('mindmap.mmd', mermaid_file, 'text/plain')
             }
@@ -274,7 +274,7 @@ class TestBasicIOImportMermaid:
         mermaid_file = BytesIO(invalid_mermaid.encode('utf-8'))
         
         # Import via Basic I/O - type and company_id in query params
-        import_url = f"{BASE_URL}/import?type=mermaid&url=http://identity_service:5000/organization_units&company_id={company_id}"
+        import_url = f"{BASE_URL}/import?type=mermaid&service=identity&path=/organization_units&company_id={company_id}"
         files = {
             'file': ('invalid.mmd', mermaid_file, 'text/plain')
         }
@@ -339,7 +339,7 @@ class TestBasicIOImportMermaid:
             mermaid_file = BytesIO(mermaid_content.encode('utf-8'))
             
             # Import via Basic I/O - type and company_id in query params
-            import_url = f"{BASE_URL}/import?type=mermaid&url=http://identity_service:5000/organization_units&company_id={company_id}"
+            import_url = f"{BASE_URL}/import?type=mermaid&service=identity&path=/organization_units&company_id={company_id}"
             files = {
                 'file': ('parent_child.mmd', mermaid_file, 'text/plain')
             }

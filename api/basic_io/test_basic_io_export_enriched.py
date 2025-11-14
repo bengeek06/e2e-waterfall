@@ -24,11 +24,12 @@ class TestBasicIOExportEnriched:
         
         # Export depuis users avec enrich=true
         # Users a plusieurs FK: company_id, organization_unit_id, etc.
-        target_url = "http://identity_service:5000/users"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/users",
             "type": "json",
             "enrich": "true"
         }
@@ -77,11 +78,12 @@ class TestBasicIOExportEnriched:
         
         # Export enrichi depuis users
         # Le service devrait détecter que 'email' est le lookup_field approprié
-        target_url = "http://identity_service:5000/users"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/users",
             "type": "json",
             "enrich": "true"
         }
@@ -130,11 +132,11 @@ class TestBasicIOExportEnriched:
         
         # Export enrichi depuis projects
         # Le service devrait détecter que 'name' est un bon lookup_field
-        target_url = "http://project_service:5000/projects"
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "project",
+            "path": "/projects",
             "type": "json",
             "enrich": "true"
         }
@@ -180,11 +182,12 @@ class TestBasicIOExportEnriched:
         assert session_auth_cookies, "Authentication failed"
         
         # Export enrichi depuis organization_units (qui a parent_id self-reference)
-        target_url = "http://identity_service:5000/organization_units"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/users",
             "type": "json",
             "enrich": "true"
         }
@@ -248,11 +251,12 @@ class TestBasicIOExportEnriched:
         assert session_auth_cookies, "Authentication failed"
         
         # Export enrichi depuis users
-        target_url = "http://identity_service:5000/users"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/users",
             "type": "json",
             "enrich": "true"
         }
@@ -312,11 +316,12 @@ class TestBasicIOExportEnriched:
         assert session_auth_cookies, "Authentication failed"
         
         # Export CSV enrichi
-        target_url = "http://identity_service:5000/users"
+        
         
         url = f"{api_tester.base_url}/api/basic-io/export"
         params = {
-            "url": target_url,
+            "service": "identity",
+            "path": "/users",
             "type": "csv",
             "enrich": "true"
         }
