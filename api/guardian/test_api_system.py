@@ -14,60 +14,7 @@ from conftest import get_service_logger
 
 logger = get_service_logger('guardian')
 
-class APITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        # Ignorer les certificats auto-signés pour les tests
-        self.session.verify = False
-    
-    @staticmethod
-    def log_request(method, url, data=None, cookies=None):
-        """Log une requête HTTP avec détails"""
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            safe_data = data.copy() if isinstance(data, dict) else data
-            if isinstance(safe_data, dict) and 'password' in safe_data:
-                safe_data['password'] = '***'
-            logger.debug(f">>> Request body: {safe_data}")
-        if cookies:
-            for key, value in cookies.items():
-                display_value = f"{value[:50]}..." if len(value) > 50 else value
-                logger.debug(f">>> Using {key}: {display_value}")
-    
-    @staticmethod
-    def log_response(response):
-        """Log une réponse HTTP avec détails"""
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        logger.debug(f"<<< Response headers: {dict(response.headers)}")
-        try:
-            if response.text:
-                logger.debug(f"<<< Response body: {response.json()}")
-        except:
-            logger.debug(f"<<< Response body (raw): {response.text}")
-
 class TestAPISystem:
-    @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return APITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Obtenir un token d'authentification pour les endpoints protégés"""
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        if response.status_code == 200:
-            return response.cookies
-        return None
-
     def test01_health_check(self, api_tester):
         """Tester l'endpoint /health (sans authentification)"""
         
@@ -102,13 +49,13 @@ class TestAPISystem:
         
         logger.info(f"✅ Guardian service status: {result['status']}, environment: {result['environment']}")
 
-    def test02_version_endpoint(self, api_tester, auth_token):
+    def test02_version_endpoint(self, api_tester, session_auth_cookies):
         """Tester l'endpoint /version"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         cookies_dict = {
-            'access_token': auth_token.get('access_token'),
-            'refresh_token': auth_token.get('refresh_token')
+            'access_token': session_auth_cookies.get('access_token'),
+            'refresh_token': session_auth_cookies.get('refresh_token')
         }
         
         url = f"{api_tester.base_url}/api/guardian/version"
@@ -126,13 +73,13 @@ class TestAPISystem:
         
         logger.info(f"✅ Guardian API version: {result['version']}")
 
-    def test03_config_endpoint(self, api_tester, auth_token):
+    def test03_config_endpoint(self, api_tester, session_auth_cookies):
         """Tester l'endpoint /config"""
-        assert auth_token is not None, "No auth cookies available"
+        assert session_auth_cookies is not None, "No auth cookies available"
         
         cookies_dict = {
-            'access_token': auth_token.get('access_token'),
-            'refresh_token': auth_token.get('refresh_token')
+            'access_token': session_auth_cookies.get('access_token'),
+            'refresh_token': session_auth_cookies.get('refresh_token')
         }
         
         url = f"{api_tester.base_url}/api/guardian/config"

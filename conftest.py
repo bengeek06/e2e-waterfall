@@ -1,12 +1,17 @@
 import os
 import logging
 import requests
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 from pytest import fixture
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from webdriver_manager.chrome import ChromeDriverManager
+import urllib3
+
+# Désactiver les warnings SSL pour les tests (certificats auto-signés)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.', '.env.test'))
 
@@ -58,6 +63,77 @@ def get_service_logger(service_name: str) -> logging.Logger:
         service_logger.propagate = False  # Éviter la propagation au logger parent
     
     return service_logger
+
+
+class APITester:
+    """
+    Classe générique pour tester les APIs
+    Utilisable pour tous les services (Identity, Guardian, Storage, Basic I/O, etc.)
+    """
+    def __init__(self, app_config):
+        self.session = requests.Session()
+        self.base_url = app_config['web_url']
+        self.session.verify = False
+        self.auth_cookies = None
+    
+    @staticmethod
+    def log_request(method: str, url: str, data=None, cookies=None):
+        """Log la requête envoyée"""
+        logger.debug(f">>> REQUEST: {method} {url}")
+        if data:
+            safe_data = data.copy() if isinstance(data, dict) else data
+            if isinstance(safe_data, dict) and 'password' in safe_data:
+                safe_data['password'] = '***'
+            logger.debug(f">>> Request body: {safe_data}")
+    
+    @staticmethod
+    def log_response(response: requests.Response):
+        """Log la réponse reçue"""
+        logger.debug(f"<<< RESPONSE: {response.status_code}")
+        try:
+            if response.text:
+                logger.debug(f"<<< Response body: {response.json()}")
+        except:
+            logger.debug(f"<<< Response body (raw): {response.text[:200]}")
+        
+    def wait_for_api(self, endpoint: str, timeout: int = 120) -> bool:
+        """Attendre qu'une API soit disponible"""
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
+                logger.debug(f"wait_for_api - Status: {response.status_code}")
+                if response.status_code == 200:
+                    return True
+            except requests.exceptions.RequestException as e:
+                logger.debug(f"Request exception: {e}")
+                pass
+            time.sleep(2)
+        return False
+    
+    def login(self, email: str, password: str):
+        """
+        Login and return both access and refresh tokens
+        
+        Args:
+            email: User email
+            password: User password
+            
+        Returns:
+            dict with 'access_token' and 'refresh_token' or None if login failed
+        """
+        login_data = {"email": email, "password": password}
+        response = self.session.post(
+            f"{self.base_url}/api/auth/login",
+            json=login_data
+        )
+        if response.status_code == 200:
+            return {
+                'access_token': response.cookies.get('access_token'),
+                'refresh_token': response.cookies.get('refresh_token')
+            }
+        return None
+
 
 class TestSelectors:
     """Sélecteurs centralisés pour les tests E2E"""
@@ -113,6 +189,80 @@ def app_config():
         'login': os.getenv('LOGIN'),
         'password': os.getenv('PASSWORD')
     }
+
+
+@fixture(scope="session")
+def api_tester(app_config):
+    """
+    Fixture session-level pour créer une instance d'APITester
+    Réutilisable par tous les tests
+    """
+    return APITester(app_config)
+
+
+@fixture(scope="session")
+def session_auth_token(api_tester, app_config):
+    """
+    Fixture session-level pour l'authentification
+    Effectue le login une seule fois pour toute la session de tests
+    Retourne un dict avec access_token et refresh_token
+    """
+    logger.info("=" * 60)
+    logger.info("Performing session-level authentication")
+    logger.info("=" * 60)
+    
+    logger.info(f"Logging in as {app_config['login']}...")
+    tokens = api_tester.login(app_config['login'], app_config['password'])
+    
+    if not tokens:
+        logger.error("Login failed - no tokens received")
+        return None
+    
+    logger.info("✅ Session authentication successful")
+    return tokens
+
+
+@fixture(scope="session")
+def session_auth_cookies(session_auth_token):
+    """
+    Fixture session-level pour les cookies d'authentification
+    Format dict compatible avec requests
+    """
+    if not session_auth_token:
+        return None
+    # session_auth_token est déjà un dict avec access_token et refresh_token
+    return session_auth_token
+
+
+@fixture(scope="session")
+def session_user_info(api_tester, session_auth_token):
+    """
+    Fixture session-level pour récupérer les informations de l'utilisateur authentifié
+    (company_id, user_id, organization_unit_id, etc.)
+    """
+    if not session_auth_token:
+        logger.error("No session auth token available")
+        return None
+    
+    try:
+        # Use /api/auth/verify endpoint with cookies
+        verify_url = f"{api_tester.base_url}/api/auth/verify"
+        response = api_tester.session.get(
+            verify_url,
+            cookies={"access_token": session_auth_token['access_token']}
+        )
+        
+        if response.status_code != 200:
+            logger.error(f"Failed to verify auth: {response.status_code}")
+            return None
+        
+        user_info = response.json()
+        logger.info(f"✅ User info retrieved: company_id={user_info.get('company_id')}, user_id={user_info.get('id')}")
+        return user_info
+        
+    except Exception as e:
+        logger.error(f"Error getting user info: {e}")
+        return None
 
 
 def check_service_initialized(base_url: str, service: str) -> bool:
@@ -251,3 +401,11 @@ def ensure_app_initialized(app_config):
     logger.info("=" * 60)
     logger.info("Test session completed")
     logger.info("=" * 60)
+
+
+# Hook pytest pour ajouter un délai entre les tests (éviter 503)
+def pytest_runtest_teardown(item, nextitem):
+    """Ajouter un petit délai entre les tests pour éviter de surcharger le backend"""
+    if nextitem is not None:
+        import time
+        time.sleep(0.1)  # 100ms de pause entre chaque test

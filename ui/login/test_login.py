@@ -136,21 +136,21 @@ class TestUserLogin:
         print("✓ Formulaire de connexion soumis (Enter)")
     
     @pytest.mark.order(4)
-    def test_04_verify_successful_redirect_to_welcome(self, driver, app_config):
-        """Étape 4: Vérifier la redirection vers /welcome après connexion réussie"""
-        # Attendre la redirection vers /welcome
+    def test_04_verify_successful_redirect_to_home(self, driver, app_config):
+        """Étape 4: Vérifier la redirection vers /home après connexion réussie"""
+        # Attendre la redirection vers /home
         wait = WebDriverWait(driver, 15)
         
         try:
-            # Attendre que l'URL contienne /welcome
-            wait.until(lambda d: "/welcome" in d.current_url)
+            # Attendre que l'URL contienne /home
+            wait.until(lambda d: "/home" in d.current_url)
             print(f"✓ Redirection réussie vers: {driver.current_url}")
             
-            # Vérifier qu'on est bien sur la page welcome
-            assert "/welcome" in driver.current_url
+            # Vérifier qu'on est bien sur la page home
+            assert "/home" in driver.current_url
             
         except Exception as e:
-            print(f"❌ Erreur lors de l'attente de redirection vers /welcome: {e}")
+            print(f"❌ Erreur lors de l'attente de redirection vers /home: {e}")
             print(f"URL actuelle: {driver.current_url}")
             
             # Vérifier s'il y a des messages d'erreur sur la page

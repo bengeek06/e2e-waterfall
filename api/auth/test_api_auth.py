@@ -14,69 +14,7 @@ from conftest import get_service_logger
 
 logger = get_service_logger('auth')
 
-class APITester:
-    def __init__(self, app_config):
-        self.session = requests.Session()
-        self.base_url = app_config['web_url']
-        # Ignorer les certificats auto-signés pour les tests
-        self.session.verify = False
-        
-    def wait_for_api(self, endpoint: str, timeout: int = 120) -> bool:
-        """Attendre qu'une API soit disponible"""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = self.session.get(f"{self.base_url}{endpoint}", timeout=5)
-                if response.status_code == 200:
-                    return True
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(2)
-        return False
-    
-    def log_request(self, method: str, url: str, data: dict = None):
-        """Log la requête envoyée"""
-        logger.debug(f">>> REQUEST: {method} {url}")
-        if data:
-            logger.debug(f">>> Request body: {data}")
-    
-    def log_response(self, response: requests.Response):
-        """Log la réponse reçue"""
-        logger.debug(f"<<< RESPONSE: {response.status_code}")
-        logger.debug(f"<<< Response headers: {dict(response.headers)}")
-        try:
-            response_json = response.json()
-            logger.debug(f"<<< Response body: {response_json}")
-        except:
-            logger.debug(f"<<< Response body (text): {response.text[:200]}")
-
 class TestAPICommunication:
-    @pytest.fixture(scope="class")
-    def api_tester(self, app_config):
-        return APITester(app_config)
-    
-    @pytest.fixture(scope="class")
-    def auth_token(self, api_tester, app_config):
-        """Obtenir un token d'authentification"""
-        # Attendre que l'API auth soit prête
-        assert api_tester.wait_for_api("/api/auth/version"), "API Auth not ready"
-        
-        # Créer un utilisateur de test et s'authentifier
-        login_data = {
-            "email": app_config['login'],
-            "password": app_config['password']
-        }
-        
-        response = api_tester.session.post(
-            f"{api_tester.base_url}/api/auth/login",
-            json=login_data
-        )
-        
-        if response.status_code == 200:
-            # Retourner les cookies de réponse pour avoir accès aux deux tokens
-            return response.cookies
-        return None
-    
     def test01_api_health_check(self, api_tester):
         """Vérifier que l'API auth est accessible"""
         assert api_tester.wait_for_api("/api/auth/health"), "API Auth not reachable"
@@ -123,12 +61,12 @@ class TestAPICommunication:
         assert token is not None, f"No access token found in cookies. Available cookies: {list(cookies.keys())}"
         logger.info(f"Received access token from cookie: {token[:50]}...")
 
-    def test04_api_verify_token(self, api_tester, auth_token):
+    def test04_api_verify_token(self, api_tester, session_auth_cookies):
         """Tester la vérification du token via l'API auth"""
-        assert auth_token is not None, "No auth cookies available for verify test"
+        assert session_auth_cookies is not None, "No auth cookies available for verify test"
         
         # Ajouter le token d'accès aux cookies de la session
-        access_token = auth_token.get('access_token')
+        access_token = session_auth_cookies.get('access_token')
         assert access_token is not None, "No access token available"
         
         api_tester.session.cookies.set('access_token', access_token)
@@ -151,13 +89,26 @@ class TestAPICommunication:
             f"Expected user info in verify response. Got: {response_json}"
         logger.info("Token verified successfully")
 
-    def test05_api_refresh_token(self, api_tester, auth_token):
-        """Tester le rafraîchissement du token via l'API auth"""
-        assert auth_token is not None, "No auth cookies available for refresh test"
+    def test05_api_refresh_token(self, api_tester, app_config):
+        """Tester le rafraîchissement du token via l'API auth
         
-        # Ajouter les tokens aux cookies de la session
-        access_token = auth_token.get('access_token')
-        refresh_token = auth_token.get('refresh_token')
+        Note: Ce test fait son propre login pour éviter d'affecter les tokens de session.
+        """
+        # Faire un login dédié pour ce test
+        login_data = {
+            "email": app_config['login'],
+            "password": app_config['password']
+        }
+        
+        login_response = api_tester.session.post(
+            f"{api_tester.base_url}/api/auth/login",
+            json=login_data
+        )
+        assert login_response.status_code == 200, f"Login failed: {login_response.text}"
+        
+        # Récupérer les tokens de ce login spécifique
+        access_token = login_response.cookies.get('access_token')
+        refresh_token = login_response.cookies.get('refresh_token')
         
         assert refresh_token is not None, "No refresh token available"
         
@@ -196,6 +147,9 @@ class TestAPICommunication:
 
     def test06_api_verify_invalid_token(self, api_tester):
         """Tester la vérification avec un token invalide"""
+        # Nettoyer tous les cookies existants pour éviter l'interférence avec les tests précédents
+        api_tester.session.cookies.clear()
+        
         # Utiliser un token invalide
         invalid_token = "invalid.token.here"
         api_tester.session.cookies.set('access_token', invalid_token)
@@ -214,15 +168,29 @@ class TestAPICommunication:
             f"Expected 401 or 403 for invalid token, got {response.status_code}: {response.text}"
         logger.info("Invalid token correctly rejected")
 
-    def test07_api_logout(self, api_tester, auth_token):
-        """Tester la déconnexion via l'API auth"""
-        assert auth_token is not None, "No auth cookies available for logout test"
+    def test07_api_logout(self, api_tester, app_config):
+        """Tester la déconnexion via l'API auth
         
-        # Ajouter tous les cookies d'authentification à la session
-        access_token = auth_token.get('access_token')
-        refresh_token = auth_token.get('refresh_token')
+        Note: Ce test fait son propre login pour éviter de révoquer le token de session
+        partagé par tous les autres tests.
+        """
+        # Faire un login dédié pour ce test (ne pas utiliser session_auth_cookies)
+        login_data = {
+            "email": app_config['login'],
+            "password": app_config['password']
+        }
         
-        logger.info(f"Available auth cookies: {list(auth_token.keys())}")
+        login_response = api_tester.session.post(
+            f"{api_tester.base_url}/api/auth/login",
+            json=login_data
+        )
+        assert login_response.status_code == 200, f"Login failed: {login_response.text}"
+        
+        # Récupérer les tokens de ce login spécifique
+        access_token = login_response.cookies.get('access_token')
+        refresh_token = login_response.cookies.get('refresh_token')
+        
+        logger.info(f"Dedicated login for logout test successful")
         
         if access_token:
             api_tester.session.cookies.set('access_token', access_token)
